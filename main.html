@@ -124,6 +124,12 @@
         crucibleResidueMass: 0,
         scaleSampleName: null,
         scaleSampleMass: 0,
+        crucibleOnSupport: false,
+        crucibleX: 246,
+        crucibleY: 534,
+        crucibleDragging: false,
+        crucibleDragOffsetX: 0,
+        crucibleDragOffsetY: 0,
         magnesiumBurning: false,
         combustionComplete: false
       });
@@ -297,6 +303,12 @@
           crucibleResidueMass: 0,
           scaleSampleName: null,
           scaleSampleMass: 0,
+          crucibleOnSupport: false,
+          crucibleX: 246,
+          crucibleY: 534,
+          crucibleDragging: false,
+          crucibleDragOffsetX: 0,
+          crucibleDragOffsetY: 0,
           magnesiumBurning: false,
           combustionComplete: false
         };
@@ -304,8 +316,15 @@
       };
 
       const handleDragStart = (event, chemId) => {
+        event.dataTransfer.setData('dragKind', 'chemical');
         event.dataTransfer.setData('chemId', chemId);
         event.dataTransfer.effectAllowed = 'copy';
+      };
+
+      const handleLabItemDragStart = (event, itemId) => {
+        event.dataTransfer.setData('dragKind', 'labItem');
+        event.dataTransfer.setData('labItem', itemId);
+        event.dataTransfer.effectAllowed = 'move';
       };
 
       const openDoseEditor = (chemId) => {
@@ -323,6 +342,33 @@
 
       const handleDrop = (event) => {
         event.preventDefault();
+        const dragKind = event.dataTransfer.getData('dragKind');
+
+        if (dragKind === 'labItem') {
+          const labItem = event.dataTransfer.getData('labItem');
+          if (labItem === 'crucible_with_mg' && activePractical === 'conservation-of-mass') {
+            const canvas = canvasRef.current;
+            if (canvas) {
+              const rect = canvas.getBoundingClientRect();
+              const canvasX = ((event.clientX - rect.left) * canvas.width) / rect.width;
+              const canvasY = ((event.clientY - rect.top) * canvas.height) / rect.height;
+              const isOnGauze = canvasX > 380 && canvasX < 480 && canvasY > 390 && canvasY < 455;
+
+              if (isOnGauze) {
+                simState.current.crucibleOnSupport = true;
+                simState.current.crucibleX = 430;
+                simState.current.crucibleY = 390;
+                setUiState((prev) => ({ ...prev, activeReaction: 'Crucible placed on gauze/tripod' }));
+              } else {
+                setUiState((prev) => ({ ...prev, activeReaction: 'Drop on top of gauze/tripod' }));
+              }
+              setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+            }
+          }
+          setIsBeakerTargeted(false);
+          return;
+        }
+
         const chemId = event.dataTransfer.getData('chemId');
         if (chemId) openDoseEditor(chemId);
         setIsBeakerTargeted(false);
@@ -335,6 +381,60 @@
 
       const handleDragLeave = () => {
         setIsBeakerTargeted(false);
+      };
+
+      const getCanvasCoords = (event) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: ((event.clientX - rect.left) * canvas.width) / rect.width,
+          y: ((event.clientY - rect.top) * canvas.height) / rect.height
+        };
+      };
+
+      const handleCanvasMouseDown = (event) => {
+        if (!equipment.crucible) return;
+        const point = getCanvasCoords(event);
+        if (!point) return;
+        const s = simState.current;
+        const cx = s.crucibleX;
+        const cy = s.crucibleY;
+        const dx = point.x - cx;
+        const dy = point.y - cy;
+        const isInsideCrucible = (dx * dx) / (34 * 34) + (dy * dy) / (20 * 20) <= 1;
+        if (!isInsideCrucible) return;
+
+        s.crucibleDragging = true;
+        s.crucibleDragOffsetX = dx;
+        s.crucibleDragOffsetY = dy;
+      };
+
+      const handleCanvasMouseMove = (event) => {
+        const s = simState.current;
+        if (!s.crucibleDragging) return;
+        const point = getCanvasCoords(event);
+        if (!point) return;
+
+        s.crucibleX = Math.max(60, Math.min(470, point.x - s.crucibleDragOffsetX));
+        s.crucibleY = Math.max(140, Math.min(605, point.y - s.crucibleDragOffsetY));
+      };
+
+      const handleCanvasMouseUp = () => {
+        const s = simState.current;
+        if (!s.crucibleDragging) return;
+        s.crucibleDragging = false;
+
+        if (activePractical === 'conservation-of-mass') {
+          const isOnGauze = s.crucibleX > 380 && s.crucibleX < 480 && s.crucibleY > 360 && s.crucibleY < 430;
+          if (isOnGauze) {
+            s.crucibleOnSupport = true;
+            s.crucibleX = 430;
+            s.crucibleY = 390;
+          } else {
+            s.crucibleOnSupport = false;
+          }
+        }
       };
 
       const confirmDose = () => {
@@ -380,6 +480,11 @@
         s.crucibleMgMass += s.scaleSampleMass;
         s.scaleSampleMass = 0;
         s.scaleSampleName = null;
+        s.crucibleOnSupport = false;
+        s.crucibleX = 246;
+        s.crucibleY = 534;
+        s.crucibleX = 246;
+        s.crucibleY = 534;
         s.combustionComplete = false;
         setUiState((prev) => ({ ...prev, activeReaction: `Mg loaded to crucible (${s.crucibleMgMass.toFixed(2)} g)` }));
         setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
@@ -428,7 +533,7 @@
         }
 
         if (equipment.crucible) {
-          if (equipment.bunsen && equipment.bunsenLit) s.crucibleTemp = Math.min(900, s.crucibleTemp + 1.6);
+          if (equipment.bunsen && equipment.bunsenLit && s.crucibleOnSupport) s.crucibleTemp = Math.min(900, s.crucibleTemp + 1.6);
           else s.crucibleTemp = Math.max(20, s.crucibleTemp - 0.9);
 
           if (!s.magnesiumBurning && s.crucibleMgMass > 0 && s.crucibleTemp > 520) {
@@ -810,6 +915,14 @@
           ctx.roundRect(SX + 18, SY + 72, 16, 8, 2);
           ctx.roundRect(SX + SW - 34, SY + 72, 16, 8, 2);
           ctx.fill();
+
+          const scaleTopGloss = ctx.createLinearGradient(SX + 6, SY + 2, SX + SW - 6, SY + 16);
+          scaleTopGloss.addColorStop(0, 'rgba(255,255,255,0.22)');
+          scaleTopGloss.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = scaleTopGloss;
+          ctx.beginPath();
+          ctx.roundRect(SX + 6, SY + 2, SW - 12, 14, 5);
+          ctx.fill();
         }
 
         if (equipment.tripod) {
@@ -846,8 +959,8 @@
         }
 
         if (equipment.crucible) {
-          const CX = 430;
-          const CY = 390;
+          const CX = simState.current.crucibleX;
+          const CY = simState.current.crucibleY;
           const tempTint = Math.min(1, (simState.current.crucibleTemp - 20) / 700);
           const crucibleGrad = ctx.createLinearGradient(CX - 30, CY - 16, CX + 30, CY + 14);
           crucibleGrad.addColorStop(0, `rgba(${Math.round(55 + tempTint * 170)}, ${Math.round(56 + tempTint * 86)}, ${Math.round(70 - tempTint * 30)}, 0.98)`);
@@ -883,6 +996,12 @@
           ctx.font = '11px monospace';
           ctx.fillText(`Mg: ${simState.current.crucibleMgMass.toFixed(2)} g`, CX - 42, CY - 24);
           ctx.fillText(`MgO: ${simState.current.crucibleResidueMass.toFixed(2)} g`, CX - 46, CY + 35);
+
+          if (!simState.current.crucibleOnSupport && activePractical === 'conservation-of-mass') {
+            ctx.fillStyle = 'rgba(148,163,184,0.75)';
+            ctx.font = '10px sans-serif';
+            ctx.fillText('Drag crucible to gauze', CX - 48, CY + 54);
+          }
         }
 
         if (equipment.bunsen) {
@@ -909,6 +1028,12 @@
           ctx.beginPath();
           ctx.ellipse(BX2 - 18, BY2 + 4, 8, 4, 0, 0, Math.PI * 2);
           ctx.fill();
+
+          const barrelHighlight = ctx.createLinearGradient(BX2 - 4, BY2 - 34, BX2 + 4, BY2 + 20);
+          barrelHighlight.addColorStop(0, 'rgba(255,255,255,0.25)');
+          barrelHighlight.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = barrelHighlight;
+          ctx.fillRect(BX2 - 3, BY2 - 34, 3, 54);
 
           if (equipment.bunsenLit) {
             const flicker = (Math.random() - 0.5) * 4;
@@ -1100,6 +1225,16 @@
                       {equipment.crucible && (
                         <button onClick={transferScaleToCrucible} className="w-full py-1.5 text-xs rounded bg-sky-600 hover:bg-sky-500">Transfer weighed Mg to crucible</button>
                       )}
+
+                      {equipment.crucible && simState.current.crucibleMgMass > 0 && (
+                        <div
+                          draggable
+                          onDragStart={(event) => handleLabItemDragStart(event, 'crucible_with_mg')}
+                          className="w-full py-1.5 text-xs rounded border border-amber-400/40 bg-amber-500/10 text-amber-200 text-center cursor-grab active:cursor-grabbing"
+                        >
+                          Drag Crucible + Mg onto Gauze
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -1226,7 +1361,16 @@
                 className={`transition-all duration-300 ${activeTab === 'chemicals' ? 'scale-100' : 'scale-95'}`}
                 style={{ transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.zoom})` }}
               >
-                <canvas ref={canvasRef} width={520} height={640} className="z-10 cursor-crosshair" />
+                <canvas
+                  ref={canvasRef}
+                  width={520}
+                  height={640}
+                  onMouseDown={handleCanvasMouseDown}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseUp={handleCanvasMouseUp}
+                  onMouseLeave={handleCanvasMouseUp}
+                  className="z-10 cursor-crosshair"
+                />
               </div>
             </div>
 
@@ -1241,20 +1385,22 @@
               />
             )}
 
-            <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
-              <HoldButton
-                onHold={() => changeTemp(1.5)}
-                className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                icon={<Flame className="w-6 h-6" />}
-                label="HEAT"
-              />
-              <HoldButton
-                onHold={() => changeTemp(-1.5)}
-                className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                icon={<Snowflake className="w-6 h-6" />}
-                label="COOL"
-              />
-            </div>
+            {activePractical !== 'conservation-of-mass' && (
+              <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+                <HoldButton
+                  onHold={() => changeTemp(1.5)}
+                  className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                  icon={<Flame className="w-6 h-6" />}
+                  label="HEAT"
+                />
+                <HoldButton
+                  onHold={() => changeTemp(-1.5)}
+                  className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+                  icon={<Snowflake className="w-6 h-6" />}
+                  label="COOL"
+                />
+              </div>
+            )}
           </div>
 
           <HelpModal forceOpenNonce={helpOpenNonce} />
