@@ -92,11 +92,21 @@
         activeReaction: null
       });
       const [activeTab, setActiveTab] = useState('chemicals');
-      const [equipment, setEquipment] = useState({ syringe: false, thermometer: true });
+      const [equipment, setEquipment] = useState({
+        syringe: false,
+        thermometer: true,
+        bunsen: false,
+        bunsenLit: false,
+        crucible: false,
+        tripod: false,
+        gauze: false,
+        scales: false
+      });
       const [doseEditor, setDoseEditor] = useState(null);
       const [isBeakerTargeted, setIsBeakerTargeted] = useState(false);
       const [view, setView] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
       const [helpOpenNonce, setHelpOpenNonce] = useState(0);
+      const [activePractical, setActivePractical] = useState(null);
 
       const simState = useRef({
         volume: 0,
@@ -108,7 +118,14 @@
         color: [200, 230, 255, 0],
         particles: [],
         indicatorPresent: false,
-        boiling: false
+        boiling: false,
+        crucibleTemp: 20,
+        crucibleMgMass: 0,
+        crucibleResidueMass: 0,
+        scaleSampleName: null,
+        scaleSampleMass: 0,
+        magnesiumBurning: false,
+        combustionComplete: false
       });
 
       const canvasRef = useRef(null);
@@ -274,7 +291,14 @@
           color: [200, 230, 255, 0],
           particles: [],
           indicatorPresent: false,
-          boiling: false
+          boiling: false,
+          crucibleTemp: 20,
+          crucibleMgMass: 0,
+          crucibleResidueMass: 0,
+          scaleSampleName: null,
+          scaleSampleMass: 0,
+          magnesiumBurning: false,
+          combustionComplete: false
         };
         setUiState({ temp: 20, volume: 0, ph: 7.0, gasVolume: 0, activeReaction: null });
       };
@@ -339,6 +363,52 @@
         setView({ zoom: 1, offsetX: 0, offsetY: 0 });
       };
 
+      const weighSample = (chemId, mass) => {
+        const s = simState.current;
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem || !equipment.scales) return;
+        s.scaleSampleName = chem.name;
+        s.scaleSampleMass = Number(mass.toFixed(2));
+        setUiState((prev) => ({ ...prev, activeReaction: `${chem.name} weighed: ${s.scaleSampleMass.toFixed(2)} g` }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+      };
+
+      const transferScaleToCrucible = () => {
+        const s = simState.current;
+        if (!equipment.crucible || s.scaleSampleMass <= 0) return;
+        if (!s.scaleSampleName.toLowerCase().includes('magnesium')) return;
+        s.crucibleMgMass += s.scaleSampleMass;
+        s.scaleSampleMass = 0;
+        s.scaleSampleName = null;
+        s.combustionComplete = false;
+        setUiState((prev) => ({ ...prev, activeReaction: `Mg loaded to crucible (${s.crucibleMgMass.toFixed(2)} g)` }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+      };
+
+      const loadConservationPractical = () => {
+        const s = simState.current;
+        s.volume = 0;
+        s.contents = {};
+        s.color = [200, 230, 255, 0];
+        s.indicatorPresent = false;
+        s.ph = 7;
+
+        setEquipment((prev) => ({
+          ...prev,
+          bunsen: true,
+          bunsenLit: false,
+          crucible: true,
+          tripod: true,
+          gauze: true,
+          scales: true
+        }));
+        setActivePractical('conservation-of-mass');
+        resetView();
+        setActiveTab('practicals');
+        setUiState((prev) => ({ ...prev, activeReaction: 'Conservation of mass setup loaded' }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+      };
+
       const draw = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -353,7 +423,54 @@
         if (s.temp < 20) s.temp += 0.008;
         s.temp = Math.max(-10, Math.min(220, s.temp));
 
-        if (s.temp >= 100 && s.volume > 0) {
+        if (equipment.bunsen && equipment.bunsenLit && s.volume > 0) {
+          s.temp = Math.min(220, s.temp + 0.018);
+        }
+
+        if (equipment.crucible) {
+          if (equipment.bunsen && equipment.bunsenLit) s.crucibleTemp = Math.min(900, s.crucibleTemp + 1.6);
+          else s.crucibleTemp = Math.max(20, s.crucibleTemp - 0.9);
+
+          if (!s.magnesiumBurning && s.crucibleMgMass > 0 && s.crucibleTemp > 520) {
+            s.magnesiumBurning = true;
+            s.combustionComplete = false;
+            setUiState((prev) => ({ ...prev, activeReaction: 'Magnesium combustion started' }));
+            setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+          }
+
+          if (s.magnesiumBurning) {
+            const burnRate = Math.min(s.crucibleMgMass, 0.0045);
+            s.crucibleMgMass -= burnRate;
+            s.crucibleResidueMass += burnRate * 1.66;
+
+            for (let i = 0; i < 4; i += 1) {
+              s.particles.push({
+                type: 'mgSpark',
+                x: 430 + (Math.random() - 0.5) * 18,
+                y: 390 + (Math.random() - 0.5) * 8,
+                vx: (Math.random() - 0.5) * 1.6,
+                vy: -1.4 - Math.random() * 1.8,
+                life: 0.9,
+                size: 1.6 + Math.random() * 2.2,
+                color: Math.random() > 0.5 ? '#ffffff' : '#fff59e'
+              });
+            }
+
+            if (s.crucibleMgMass <= 0.001) {
+              s.crucibleMgMass = 0;
+              s.magnesiumBurning = false;
+              if (!s.combustionComplete) {
+                s.combustionComplete = true;
+                setUiState((prev) => ({ ...prev, activeReaction: 'Mg combustion complete (MgO formed)' }));
+                setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+              }
+            }
+          }
+        }
+
+        const showBeaker = activePractical !== 'conservation-of-mass';
+
+        if (showBeaker && s.temp >= 100 && s.volume > 0) {
           s.volume -= 0.1;
           s.boiling = true;
           if (Math.random() > 0.8) {
@@ -369,7 +486,7 @@
             });
           }
           if (Math.random() > 0.9) triggerReaction('steam');
-        } else {
+        } else if (showBeaker) {
           s.boiling = false;
         }
 
@@ -414,6 +531,8 @@
           ctx.lineTo(BX + BW - 8, BY + 8);
           ctx.closePath();
         };
+
+        if (showBeaker) {
 
         ctx.save();
         ctx.shadowColor = isBeakerTargeted ? 'rgba(56, 189, 248, 0.55)' : 'rgba(15, 23, 42, 0.45)';
@@ -567,7 +686,7 @@
 
         s.particles.forEach((particle) => {
           ctx.save();
-          if (particle.type === 'bubble' || particle.type === 'solid') {
+          if (showBeaker && (particle.type === 'bubble' || particle.type === 'solid')) {
             buildInnerBeakerPath();
             ctx.clip();
           }
@@ -592,6 +711,11 @@
           } else if (particle.type === 'solid') {
             ctx.fillStyle = particle.color;
             ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          } else if (particle.type === 'mgSpark') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
           }
           ctx.restore();
         });
@@ -642,8 +766,170 @@
           ctx.fillText(`${i * 100}ml`, BX + 30, y + 4);
         }
 
+        }
+
+        if (equipment.scales) {
+          const SX = 24;
+          const SY = 534;
+          const SW = 152;
+          const SH = 86;
+
+          const scaleBody = ctx.createLinearGradient(SX, SY, SX + SW, SY + SH);
+          scaleBody.addColorStop(0, 'rgba(51,65,85,0.96)');
+          scaleBody.addColorStop(1, 'rgba(30,41,59,0.98)');
+          ctx.fillStyle = scaleBody;
+          ctx.strokeStyle = 'rgba(203,213,225,0.55)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(SX, SY, SW, SH, 10);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(15,23,42,0.96)';
+          ctx.beginPath();
+          ctx.roundRect(SX + 14, SY + 14, SW - 28, 28, 5);
+          ctx.fill();
+
+          ctx.fillStyle = '#5eead4';
+          ctx.font = 'bold 15px monospace';
+          ctx.fillText(`${simState.current.scaleSampleMass.toFixed(2)} g`, SX + 28, SY + 33);
+
+          ctx.fillStyle = 'rgba(148,163,184,0.28)';
+          ctx.beginPath();
+          ctx.ellipse(SX + SW / 2, SY + 61, 42, 10, 0, 0, Math.PI * 2);
+          ctx.fill();
+          if (simState.current.scaleSampleMass > 0) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.beginPath();
+            ctx.ellipse(SX + SW / 2, SY + 60, 15, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = 'rgba(203,213,225,0.6)';
+          ctx.beginPath();
+          ctx.roundRect(SX + 18, SY + 72, 16, 8, 2);
+          ctx.roundRect(SX + SW - 34, SY + 72, 16, 8, 2);
+          ctx.fill();
+        }
+
+        if (equipment.tripod) {
+          const TX = 430;
+          const TY = 478;
+          ctx.strokeStyle = 'rgba(226,232,240,0.9)';
+          ctx.lineWidth = 3.4;
+          ctx.beginPath();
+          ctx.moveTo(TX - 30, TY - 52);
+          ctx.lineTo(TX - 52, TY + 2);
+          ctx.moveTo(TX + 30, TY - 52);
+          ctx.lineTo(TX + 52, TY + 2);
+          ctx.moveTo(TX, TY - 52);
+          ctx.lineTo(TX, TY + 6);
+          ctx.moveTo(TX - 34, TY - 49);
+          ctx.lineTo(TX + 34, TY - 49);
+          ctx.stroke();
+        }
+
+        if (equipment.gauze) {
+          const GX = 430;
+          const GY = 426;
+          ctx.strokeStyle = 'rgba(226,232,240,0.8)';
+          ctx.lineWidth = 1.4;
+          ctx.strokeRect(GX - 34, GY - 10, 68, 20);
+          for (let i = -30; i <= 30; i += 6) {
+            ctx.beginPath();
+            ctx.moveTo(GX + i, GY - 10);
+            ctx.lineTo(GX + i, GY + 10);
+            ctx.moveTo(GX - 34, GY + i * 0.33);
+            ctx.lineTo(GX + 34, GY + i * 0.33);
+            ctx.stroke();
+          }
+        }
+
+        if (equipment.crucible) {
+          const CX = 430;
+          const CY = 390;
+          const tempTint = Math.min(1, (simState.current.crucibleTemp - 20) / 700);
+          const crucibleGrad = ctx.createLinearGradient(CX - 30, CY - 16, CX + 30, CY + 14);
+          crucibleGrad.addColorStop(0, `rgba(${Math.round(55 + tempTint * 170)}, ${Math.round(56 + tempTint * 86)}, ${Math.round(70 - tempTint * 30)}, 0.98)`);
+          crucibleGrad.addColorStop(1, `rgba(${Math.round(35 + tempTint * 120)}, ${Math.round(36 + tempTint * 50)}, ${Math.round(45 - tempTint * 22)}, 0.98)`);
+          ctx.fillStyle = crucibleGrad;
+          ctx.beginPath();
+          ctx.ellipse(CX, CY, 30, 16, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(241,245,249,0.85)';
+          ctx.lineWidth = 2.2;
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(12,18,34,0.9)';
+          ctx.beginPath();
+          ctx.ellipse(CX, CY - 2, 20, 8.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (simState.current.crucibleMgMass > 0) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.beginPath();
+            ctx.ellipse(CX, CY - 2, Math.min(14, 4 + simState.current.crucibleMgMass * 2.5), 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          if (simState.current.magnesiumBurning) {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.beginPath();
+            ctx.ellipse(CX, CY - 8, 15, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = 'rgba(203,213,225,0.85)';
+          ctx.font = '11px monospace';
+          ctx.fillText(`Mg: ${simState.current.crucibleMgMass.toFixed(2)} g`, CX - 42, CY - 24);
+          ctx.fillText(`MgO: ${simState.current.crucibleResidueMass.toFixed(2)} g`, CX - 46, CY + 35);
+        }
+
+        if (equipment.bunsen) {
+          const BX2 = 430;
+          const BY2 = 530;
+          const baseGrad = ctx.createLinearGradient(BX2 - 20, BY2 + 18, BX2 + 20, BY2 + 34);
+          baseGrad.addColorStop(0, 'rgba(71,85,105,0.97)');
+          baseGrad.addColorStop(1, 'rgba(51,65,85,0.97)');
+          ctx.fillStyle = baseGrad;
+          ctx.beginPath();
+          ctx.roundRect(BX2 - 22, BY2 + 18, 44, 18, 5);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(203,213,225,0.45)';
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(203,213,225,0.95)';
+          ctx.fillRect(BX2 - 4, BY2 - 34, 8, 54);
+          ctx.fillStyle = 'rgba(100,116,139,0.94)';
+          ctx.beginPath();
+          ctx.roundRect(BX2 - 12, BY2 - 6, 24, 10, 3);
+          ctx.fill();
+
+          ctx.fillStyle = 'rgba(120,130,150,0.95)';
+          ctx.beginPath();
+          ctx.ellipse(BX2 - 18, BY2 + 4, 8, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (equipment.bunsenLit) {
+            const flicker = (Math.random() - 0.5) * 4;
+            ctx.beginPath();
+            ctx.moveTo(BX2, BY2 - 40 + flicker);
+            ctx.quadraticCurveTo(BX2 - 12, BY2 - 16, BX2, BY2 - 2);
+            ctx.quadraticCurveTo(BX2 + 12, BY2 - 16, BX2, BY2 - 40 + flicker);
+            ctx.fillStyle = 'rgba(56,189,248,0.9)';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(BX2, BY2 - 32 + flicker);
+            ctx.quadraticCurveTo(BX2 - 7, BY2 - 16, BX2, BY2 - 6);
+            ctx.quadraticCurveTo(BX2 + 7, BY2 - 16, BX2, BY2 - 32 + flicker);
+            ctx.fillStyle = 'rgba(147,197,253,0.95)';
+            ctx.fill();
+          }
+        }
+
         requestRef.current = requestAnimationFrame(draw);
-      }, [equipment.syringe, isBeakerTargeted]);
+      }, [equipment, isBeakerTargeted, activePractical]);
 
       useEffect(() => {
         requestRef.current = requestAnimationFrame(draw);
@@ -681,11 +967,27 @@
       };
 
       const toggleEquipment = (item) => {
-        setEquipment((prev) => ({ ...prev, [item]: !prev[item] }));
-        if (item === 'syringe' && !equipment.syringe) {
-          simState.current.gasVolume = 0;
+        setEquipment((prev) => {
+          const next = { ...prev, [item]: !prev[item] };
+          if (item === 'bunsen' && !next.bunsen) next.bunsenLit = false;
+          return next;
+        });
+
+        if (item === 'syringe' && !equipment.syringe) simState.current.gasVolume = 0;
+        if (item === 'scales' && equipment.scales) {
+          simState.current.scaleSampleMass = 0;
+          simState.current.scaleSampleName = null;
         }
       };
+
+      const equipmentCards = [
+        { key: 'syringe', title: 'Gas Syringe', desc: 'Collects reaction gases', emoji: '💉' },
+        { key: 'bunsen', title: 'Bunsen Burner', desc: 'Slowly heats apparatus', emoji: '🔥' },
+        { key: 'crucible', title: 'Crucible', desc: 'For magnesium combustion', emoji: '⚱️' },
+        { key: 'tripod', title: 'Tripod', desc: 'Supports crucible/gauze', emoji: '🛠️' },
+        { key: 'gauze', title: 'Wire Gauze', desc: 'Distributes heat', emoji: '🧰' },
+        { key: 'scales', title: 'Electronic Scales', desc: 'Weigh solid samples', emoji: '⚖️' }
+      ];
 
       return (
         <div className="flex flex-col md:flex-row h-screen w-full bg-slate-900 text-slate-100 font-sans overflow-hidden">
@@ -712,6 +1014,14 @@
                 Equipment
               </button>
             </div>
+            <div className="border-b border-slate-700 px-2 py-2 bg-slate-800/70">
+              <button
+                onClick={() => setActiveTab('practicals')}
+                className={`w-full py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'practicals' ? 'text-sky-300 bg-slate-700/60 border border-sky-500/40' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/40 border border-slate-700'}`}
+              >
+                Practicals ⚗️
+              </button>
+            </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {activeTab === 'chemicals' ? (
@@ -736,21 +1046,58 @@
                     </div>
                   ))}
                 </>
-              ) : (
+              ) : activeTab === 'equipment' ? (
                 <>
                   <p className="text-xs text-slate-500 mb-2">Toggle apparatus on bench</p>
-                  <button
-                    onClick={() => toggleEquipment('syringe')}
-                    className={`w-full p-4 rounded-xl border transition-all flex items-center gap-4 text-left ${equipment.syringe ? 'bg-sky-900/30 border-sky-500' : 'bg-slate-700/30 border-slate-600 hover:bg-slate-700'}`}
-                  >
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border text-lg ${equipment.syringe ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>
-                      <Syringe className="w-5 h-5" />
+                  {equipmentCards.map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => toggleEquipment(item.key)}
+                      className={`w-full p-4 rounded-xl border transition-all flex items-center gap-4 text-left ${(equipment[item.key]) ? 'bg-sky-900/30 border-sky-500' : 'bg-slate-700/30 border-slate-600 hover:bg-slate-700'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border text-lg ${(equipment[item.key]) ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>
+                        {item.emoji}
+                      </div>
+                      <div>
+                        <div className={`font-semibold ${(equipment[item.key]) ? 'text-sky-400' : 'text-slate-200'}`}>{item.title}</div>
+                        <div className="text-xs text-slate-400">{item.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+
+                  {equipment.bunsen && (
+                    <button
+                      onClick={() => setEquipment((prev) => ({ ...prev, bunsenLit: !prev.bunsenLit }))}
+                      className={`w-full py-2 rounded-lg font-medium border ${equipment.bunsenLit ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-slate-700/40 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
+                    >
+                      {equipment.bunsenLit ? 'Extinguish Bunsen' : 'Ignite Bunsen'}
+                    </button>
+                  )}
+
+                  {equipment.scales && (
+                    <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-3 space-y-2">
+                      <div className="text-xs text-slate-300">Scale reading: {simState.current.scaleSampleMass.toFixed(2)} g</div>
+                      <div className="flex gap-2">
+                        <button onClick={() => weighSample('mg', 0.5)} className="flex-1 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500">Weigh Mg 0.50 g</button>
+                        <button onClick={() => weighSample('mg', 1.0)} className="flex-1 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500">Weigh Mg 1.00 g</button>
+                      </div>
+                      {equipment.crucible && (
+                        <button onClick={transferScaleToCrucible} className="w-full py-1.5 text-xs rounded bg-sky-600 hover:bg-sky-500">Transfer weighed Mg to crucible</button>
+                      )}
                     </div>
-                    <div>
-                      <div className={`font-semibold ${equipment.syringe ? 'text-sky-400' : 'text-slate-200'}`}>Gas Syringe</div>
-                      <div className="text-xs text-slate-400">Collects reaction gases</div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Load a practical setup into the lab</p>
+                  <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-4">
+                    <div className="flex items-center gap-2 font-semibold text-slate-100">
+                      <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center">⚖️</span>
+                      <span>Conservation of Mass</span>
                     </div>
-                  </button>
+                    <div className="text-xs text-slate-400 mt-1">Auto-loads magnesium, electronic scales, crucible, tripod, gauze, and bunsen burner setup.</div>
+                    <button onClick={loadConservationPractical} className="mt-3 w-full py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">Load Practical</button>
+                  </div>
                 </>
               )}
             </div>
