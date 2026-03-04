@@ -1237,50 +1237,285 @@
         if (equipment.bunsen) {
           const BX2 = 430;
           const BY2 = 530;
-          const baseGrad = ctx.createLinearGradient(BX2 - 20, BY2 + 18, BX2 + 20, BY2 + 34);
-          baseGrad.addColorStop(0, 'rgba(71,85,105,0.97)');
-          baseGrad.addColorStop(1, 'rgba(51,65,85,0.97)');
-          ctx.fillStyle = baseGrad;
+
+          // -----------------------------
+          // Helpers
+          // -----------------------------
+          const rr = (x, y, w, h, r) => {
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, r);
+          };
+
+          const addNoise = (x, y, w, h, alpha = 0.05, step = 3) => {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (let yy = y; yy < y + h; yy += step) {
+              for (let xx = x; xx < x + w; xx += step) {
+                const n = (Math.random() * 2 - 1) * 10;
+                ctx.fillStyle = `rgb(${128 + n},${128 + n},${128 + n})`;
+                ctx.fillRect(xx, yy, 1, 1);
+              }
+            }
+            ctx.restore();
+          };
+
+          ctx.save();
+
+          // -----------------------------
+          // Ground shadow (lifts it off the surface)
+          // -----------------------------
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.30)';
           ctx.beginPath();
-          ctx.roundRect(BX2 - 22, BY2 + 18, 44, 18, 5);
+          ctx.ellipse(BX2, BY2 + 33, 30, 8, 0, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = 'rgba(203,213,225,0.45)';
+          ctx.restore();
+
+          // -----------------------------
+          // Base (3D with lip + bevel + gloss)
+          // -----------------------------
+          const baseX = BX2 - 24;
+          const baseY = BY2 + 18;
+          const baseW = 48;
+          const baseH = 20;
+
+          // Drop shadow for base itself
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 5;
+
+          const baseGrad = ctx.createLinearGradient(baseX, baseY, baseX + baseW, baseY + baseH);
+          baseGrad.addColorStop(0, 'rgba(71,85,105,0.98)');
+          baseGrad.addColorStop(0.5, 'rgba(30,41,59,0.985)');
+          baseGrad.addColorStop(1, 'rgba(15,23,42,0.99)');
+          ctx.fillStyle = baseGrad;
+          ctx.strokeStyle = 'rgba(226,232,240,0.25)';
+          ctx.lineWidth = 1.2;
+
+          rr(baseX, baseY, baseW, baseH, 6);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+
+          // Inner bevel stroke (adds depth)
+          const bevelGrad = ctx.createLinearGradient(baseX, baseY, baseX, baseY + baseH);
+          bevelGrad.addColorStop(0, 'rgba(255,255,255,0.18)');
+          bevelGrad.addColorStop(0.35, 'rgba(255,255,255,0.03)');
+          bevelGrad.addColorStop(1, 'rgba(0,0,0,0.28)');
+          ctx.strokeStyle = bevelGrad;
+          ctx.lineWidth = 2;
+          rr(baseX + 2, baseY + 2, baseW - 4, baseH - 4, 5);
           ctx.stroke();
 
-          ctx.fillStyle = 'rgba(203,213,225,0.95)';
-          ctx.fillRect(BX2 - 4, BY2 - 34, 8, 54);
-          ctx.fillStyle = 'rgba(100,116,139,0.94)';
-          ctx.beginPath();
-          ctx.roundRect(BX2 - 12, BY2 - 6, 24, 10, 3);
+          // Base top gloss
+          const baseGloss = ctx.createLinearGradient(baseX + 4, baseY + 1, baseX + baseW - 4, baseY + 12);
+          baseGloss.addColorStop(0, 'rgba(255,255,255,0.20)');
+          baseGloss.addColorStop(0.4, 'rgba(255,255,255,0.07)');
+          baseGloss.addColorStop(1, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = baseGloss;
+          rr(baseX + 3, baseY + 1, baseW - 6, 10, 5);
           ctx.fill();
 
-          ctx.fillStyle = 'rgba(120,130,150,0.95)';
-          ctx.beginPath();
-          ctx.ellipse(BX2 - 18, BY2 + 4, 8, 4, 0, 0, Math.PI * 2);
+          // Subtle texture on base
+          addNoise(baseX + 4, baseY + 4, baseW - 8, baseH - 8, 0.04, 3);
+
+          // Base lip highlight (thickness)
+          const lip = ctx.createLinearGradient(baseX, baseY + baseH - 6, baseX, baseY + baseH);
+          lip.addColorStop(0, 'rgba(0,0,0,0)');
+          lip.addColorStop(1, 'rgba(255,255,255,0.10)');
+          ctx.fillStyle = lip;
+          rr(baseX + 3, baseY + baseH - 5, baseW - 6, 4, 4);
           ctx.fill();
 
-          const barrelHighlight = ctx.createLinearGradient(BX2 - 4, BY2 - 34, BX2 + 4, BY2 + 20);
-          barrelHighlight.addColorStop(0, 'rgba(255,255,255,0.25)');
-          barrelHighlight.addColorStop(1, 'rgba(255,255,255,0)');
-          ctx.fillStyle = barrelHighlight;
-          ctx.fillRect(BX2 - 3, BY2 - 34, 3, 54);
+          // -----------------------------
+          // Barrel (metal cylinder with specular + shadow)
+          // -----------------------------
+          const barrelX = BX2 - 4;
+          const barrelY = BY2 - 36;
+          const barrelW = 8;
+          const barrelH = 56;
 
+          // Barrel body gradient (cylindrical look)
+          const barrelGrad = ctx.createLinearGradient(barrelX, barrelY, barrelX + barrelW, barrelY);
+          barrelGrad.addColorStop(0.0, 'rgba(148,163,184,0.25)');
+          barrelGrad.addColorStop(0.18, 'rgba(248,250,252,0.95)');
+          barrelGrad.addColorStop(0.48, 'rgba(203,213,225,0.90)');
+          barrelGrad.addColorStop(0.78, 'rgba(148,163,184,0.70)');
+          barrelGrad.addColorStop(1.0, 'rgba(71,85,105,0.60)');
+
+          // Slight shadow to the right (gives separation from background)
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.25)';
+          ctx.shadowBlur = 6;
+          ctx.shadowOffsetX = 2;
+          ctx.shadowOffsetY = 2;
+
+          ctx.fillStyle = barrelGrad;
+          rr(barrelX, barrelY, barrelW, barrelH, 3);
+          ctx.fill();
+
+          ctx.restore();
+
+          // Barrel edge strokes (definition)
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          rr(barrelX, barrelY, barrelW, barrelH, 3);
+          ctx.stroke();
+
+          // Specular highlight strip (sharp shine)
+          const spec = ctx.createLinearGradient(barrelX, barrelY, barrelX + barrelW, barrelY);
+          spec.addColorStop(0, 'rgba(255,255,255,0)');
+          spec.addColorStop(0.35, 'rgba(255,255,255,0.38)');
+          spec.addColorStop(0.55, 'rgba(255,255,255,0.06)');
+          spec.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = spec;
+          rr(barrelX + 1, barrelY + 1, 3, barrelH - 2, 2);
+          ctx.fill();
+
+          // Barrel top ring (opening)
+          ctx.save();
+          const ringY = barrelY - 2;
+          ctx.fillStyle = 'rgba(30,41,59,0.95)';
+          ctx.beginPath();
+          ctx.ellipse(BX2, ringY, 7.5, 2.8, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          const ringHi = ctx.createLinearGradient(BX2 - 8, ringY - 2, BX2 + 8, ringY + 2);
+          ringHi.addColorStop(0, 'rgba(255,255,255,0.18)');
+          ringHi.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+          ringHi.addColorStop(1, 'rgba(0,0,0,0.22)');
+          ctx.strokeStyle = ringHi;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(BX2, ringY, 7.5, 2.8, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // -----------------------------
+          // Collar / air control (3D knob)
+          // -----------------------------
+          const collarW = 14;
+          const collarX = BX2 - collarW / 2;
+          const collarY = BY2 - 7;
+          const collarH = 12;
+
+          // Collar shadow
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.18)';
+          rr(collarX + 1, collarY + 2, collarW, collarH, 4);
+          ctx.fill();
+          ctx.restore();
+
+          // Collar body
+          const collarGrad = ctx.createLinearGradient(collarX, collarY, collarX, collarY + collarH);
+          collarGrad.addColorStop(0, 'rgba(148,163,184,0.70)');
+          collarGrad.addColorStop(0.5, 'rgba(100,116,139,0.90)');
+          collarGrad.addColorStop(1, 'rgba(51,65,85,0.95)');
+          ctx.fillStyle = collarGrad;
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          rr(collarX, collarY, collarW, collarH, 4);
+          ctx.fill();
+          ctx.stroke();
+
+          // Collar highlight
+          const collarHi = ctx.createLinearGradient(collarX, collarY, collarX, collarY + 6);
+          collarHi.addColorStop(0, 'rgba(255,255,255,0.35)');
+          collarHi.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = collarHi;
+          rr(collarX + 1, collarY + 1, collarW - 2, 5, 3);
+          ctx.fill();
+
+          // -----------------------------
+          // Gas inlet / side port (more 3D)
+          // -----------------------------
+          const portCX = collarX - 7;
+          const portCY = collarY + collarH / 2;
+
+          // Port shadow
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+          ctx.beginPath();
+          ctx.ellipse(portCX + 1.5, portCY + 1.2, 8, 4.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // Port body (metal)
+          const portGrad = ctx.createRadialGradient(portCX - 2, portCY - 2, 2, portCX, portCY, 12);
+          portGrad.addColorStop(0, 'rgba(248,250,252,0.95)');
+          portGrad.addColorStop(0.35, 'rgba(203,213,225,0.88)');
+          portGrad.addColorStop(1, 'rgba(71,85,105,0.78)');
+          ctx.fillStyle = portGrad;
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(portCX, portCY, 8, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Port highlight
+          ctx.save();
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+          ctx.beginPath();
+          ctx.ellipse(portCX - 1, portCY - 1, 6.5, 3.0, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // -----------------------------
+          // Flame (with glow + core)
+          // -----------------------------
           if (equipment.bunsenLit) {
             const flicker = (Math.random() - 0.5) * 4;
+
+            // Outer glow
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            const glow = ctx.createRadialGradient(BX2, BY2 - 22 + flicker, 6, BX2, BY2 - 22 + flicker, 42);
+            glow.addColorStop(0, 'rgba(56,189,248,0.22)');
+            glow.addColorStop(0.5, 'rgba(56,189,248,0.10)');
+            glow.addColorStop(1, 'rgba(56,189,248,0.00)');
+            ctx.fillStyle = glow;
             ctx.beginPath();
-            ctx.moveTo(BX2, BY2 - 40 + flicker);
-            ctx.quadraticCurveTo(BX2 - 12, BY2 - 16, BX2, BY2 - 2);
-            ctx.quadraticCurveTo(BX2 + 12, BY2 - 16, BX2, BY2 - 40 + flicker);
-            ctx.fillStyle = 'rgba(56,189,248,0.9)';
+            ctx.ellipse(BX2, BY2 - 22 + flicker, 22, 30, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Main flame
+            ctx.beginPath();
+            ctx.moveTo(BX2, BY2 - 42 + flicker);
+            ctx.quadraticCurveTo(BX2 - 13, BY2 - 18, BX2, BY2 - 2);
+            ctx.quadraticCurveTo(BX2 + 13, BY2 - 18, BX2, BY2 - 42 + flicker);
+            const flameGrad = ctx.createLinearGradient(BX2, BY2 - 44 + flicker, BX2, BY2 - 2);
+            flameGrad.addColorStop(0, 'rgba(147,197,253,0.95)');
+            flameGrad.addColorStop(0.55, 'rgba(56,189,248,0.90)');
+            flameGrad.addColorStop(1, 'rgba(14,165,233,0.55)');
+            ctx.fillStyle = flameGrad;
             ctx.fill();
 
+            // Inner core
             ctx.beginPath();
-            ctx.moveTo(BX2, BY2 - 32 + flicker);
-            ctx.quadraticCurveTo(BX2 - 7, BY2 - 16, BX2, BY2 - 6);
-            ctx.quadraticCurveTo(BX2 + 7, BY2 - 16, BX2, BY2 - 32 + flicker);
-            ctx.fillStyle = 'rgba(147,197,253,0.95)';
+            ctx.moveTo(BX2, BY2 - 34 + flicker);
+            ctx.quadraticCurveTo(BX2 - 7.5, BY2 - 18, BX2, BY2 - 6);
+            ctx.quadraticCurveTo(BX2 + 7.5, BY2 - 18, BX2, BY2 - 34 + flicker);
+            const coreGrad = ctx.createLinearGradient(BX2, BY2 - 36 + flicker, BX2, BY2 - 6);
+            coreGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
+            coreGrad.addColorStop(0.6, 'rgba(186,230,253,0.92)');
+            coreGrad.addColorStop(1, 'rgba(147,197,253,0.75)');
+            ctx.fillStyle = coreGrad;
             ctx.fill();
+
+            // Tiny hot tip highlight
+            ctx.save();
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.beginPath();
+            ctx.ellipse(BX2 + 2, BY2 - 34 + flicker, 2.2, 3.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
           }
+
+          ctx.restore();
         }
 
         requestRef.current = requestAnimationFrame(draw);
