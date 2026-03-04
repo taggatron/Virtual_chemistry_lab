@@ -54,6 +54,7 @@
     const GripVertical = makeIcon('⋮');
     const Syringe = makeIcon('💉');
     const Gauge = makeIcon('📏');
+    const LAB_GUIDE_STORAGE_KEY = 'chemLabGuideDismissed';
 
     const CHEMICALS = [
       { id: 'water', name: 'Water (H₂O)', type: 'liquid', color: [200, 230, 255, 0.3], ph: 7.0, desc: 'Neutral solvent', icon: '💧' },
@@ -95,6 +96,7 @@
       const [doseEditor, setDoseEditor] = useState(null);
       const [isBeakerTargeted, setIsBeakerTargeted] = useState(false);
       const [view, setView] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
+      const [helpOpenNonce, setHelpOpenNonce] = useState(0);
 
       const simState = useRef({
         volume: 0,
@@ -771,6 +773,13 @@
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
+            <button
+              onClick={() => setHelpOpenNonce((prev) => prev + 1)}
+              className="absolute top-4 left-4 z-20 px-3 py-2 rounded-lg bg-slate-800/85 border border-slate-700 text-slate-200 hover:bg-slate-700 transition-colors text-sm"
+            >
+              Help
+            </button>
+
             <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
               <div className="flex gap-4 md:gap-8 bg-slate-800/80 backdrop-blur-md p-3 md:p-4 rounded-2xl border border-slate-700 shadow-2xl">
                 <MetricItem
@@ -885,7 +894,7 @@
             </div>
           </div>
 
-          <HelpModal />
+          <HelpModal forceOpenNonce={helpOpenNonce} />
         </div>
       );
     }
@@ -986,14 +995,33 @@
       );
     }
 
-    function HelpModal() {
-      const [isOpen, setIsOpen] = useState(true);
+    function HelpModal({ forceOpenNonce = 0 }) {
+      const [isOpen, setIsOpen] = useState(() => {
+        try {
+          return localStorage.getItem(LAB_GUIDE_STORAGE_KEY) !== '1';
+        } catch {
+          return true;
+        }
+      });
+
+      useEffect(() => {
+        if (forceOpenNonce > 0) setIsOpen(true);
+      }, [forceOpenNonce]);
+
+      const closeModal = () => {
+        setIsOpen(false);
+        try {
+          localStorage.setItem(LAB_GUIDE_STORAGE_KEY, '1');
+        } catch {
+        }
+      };
+
       if (!isOpen) return null;
 
       return (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl relative">
-            <button onClick={() => setIsOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+            <button onClick={closeModal} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-xl font-bold text-sky-400 mb-4 flex items-center gap-2">
@@ -1018,7 +1046,7 @@
               </li>
             </ul>
             <button
-              onClick={() => setIsOpen(false)}
+              onClick={closeModal}
               className="mt-6 w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 rounded-lg transition-colors"
             >
               Start Experimenting
