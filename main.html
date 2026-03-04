@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Chemistry Lab</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes doseSlideUp {
+      from {
+        transform: translateY(24px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes streamPulse {
+      0%, 100% { opacity: 0.45; transform: scaleY(0.85); }
+      50% { opacity: 1; transform: scaleY(1.15); }
+    }
+
+    .dose-slide-up {
+      animation: doseSlideUp 220ms ease-out;
+    }
+
+    .stream-pulse {
+      animation: streamPulse 900ms ease-in-out infinite;
+      transform-origin: center top;
+    }
+  </style>
+</head>
+<body class="bg-slate-950">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const makeIcon = (symbol) => ({ className = '' }) => <span className={className}>{symbol}</span>;
+    const Flame = makeIcon('🔥');
+    const Snowflake = makeIcon('❄️');
+    const Trash2 = makeIcon('🗑️');
+    const Droplets = makeIcon('💧');
+    const Zap = makeIcon('⚡');
+    const Thermometer = makeIcon('🌡️');
+    const FlaskConical = makeIcon('⚗️');
+    const Info = makeIcon('ℹ️');
+    const X = makeIcon('✖');
+    const GripVertical = makeIcon('⋮');
+    const Syringe = makeIcon('💉');
+    const Gauge = makeIcon('📏');
+
+    const CHEMICALS = [
+      { id: 'water', name: 'Water (H₂O)', type: 'liquid', color: [200, 230, 255, 0.3], ph: 7.0, desc: 'Neutral solvent', icon: '💧' },
+      { id: 'hcl', name: 'Hydrochloric Acid (HCl)', type: 'liquid', color: [255, 255, 255, 0.1], ph: 1.0, desc: 'Strong acid', icon: '🧪' },
+      { id: 'naoh', name: 'Sodium Hydroxide (NaOH)', type: 'liquid', color: [255, 255, 255, 0.15], ph: 14.0, desc: 'Strong base', icon: '🧼' },
+      { id: 'mg', name: 'Magnesium (Mg)', type: 'solid', color: [180, 180, 180, 1], ph: null, desc: 'Reactive metal', icon: '🔩' },
+      { id: 'cuso4', name: 'Copper Sulfate (CuSO₄)', type: 'solid_powder', color: [30, 144, 255, 1], ph: 6.0, desc: 'Blue crystals', icon: '🔷' },
+      { id: 'nh4no3', name: 'Ammonium Nitrate (NH₄NO₃)', type: 'solid_powder', color: [240, 240, 240, 1], ph: 7.0, desc: 'Endothermic in water', icon: '🧂' },
+      { id: 'indicator', name: 'Universal Indicator', type: 'liquid', color: [50, 200, 50, 0.9], ph: 7.0, special: 'indicator', desc: 'pH color tracker', icon: '🌈' },
+      { id: 'sodium', name: 'Sodium (Na)', type: 'solid', color: [200, 200, 200, 1], ph: null, desc: 'Very reactive metal', icon: '⚡' },
+      { id: 'kmno4', name: 'Potassium Permanganate', type: 'liquid', color: [128, 0, 128, 0.8], ph: 7.0, desc: 'Purple oxidant', icon: '🟣' },
+      { id: 'gold', name: 'Gold Particle', type: 'solid', color: [255, 215, 0, 1], ph: 7.0, desc: 'Inert metal', icon: '🪙' }
+    ];
+
+    const mixColors = (baseColor, addedColor, baseVol, addedVol) => {
+      if (baseVol <= 0) return [...addedColor];
+      const totalVol = baseVol + addedVol;
+      const w1 = baseVol / totalVol;
+      const w2 = addedVol / totalVol;
+
+      return [
+        baseColor[0] * w1 + addedColor[0] * w2,
+        baseColor[1] * w1 + addedColor[1] * w2,
+        baseColor[2] * w1 + addedColor[2] * w2,
+        Math.min(0.95, baseColor[3] * w1 + addedColor[3] * w2 + 0.05)
+      ];
+    };
+
+    function ChemistryLab() {
+      const [uiState, setUiState] = useState({
+        temp: 20,
+        volume: 0,
+        ph: 7.0,
+        gasVolume: 0,
+        activeReaction: null
+      });
+      const [activeTab, setActiveTab] = useState('chemicals');
+      const [equipment, setEquipment] = useState({ syringe: false, thermometer: true });
+      const [doseEditor, setDoseEditor] = useState(null);
+      const [isBeakerTargeted, setIsBeakerTargeted] = useState(false);
+
+      const simState = useRef({
+        volume: 0,
+        temp: 20,
+        tempEffect: 0,
+        ph: 7.0,
+        gasVolume: 0,
+        contents: {},
+        color: [200, 230, 255, 0],
+        particles: [],
+        indicatorPresent: false,
+        boiling: false
+      });
+
+      const canvasRef = useRef(null);
+      const requestRef = useRef();
+
+      const applyThermalChange = (delta, persistence = 0.015) => {
+        const s = simState.current;
+        s.temp += delta;
+        const direction = delta >= 0 ? 1 : -1;
+        s.tempEffect += direction * Math.min(0.06, Math.max(0.004, Math.abs(delta) * persistence));
+      };
+
+      const triggerReaction = (type, intensity = 1, label = null) => {
+        const s = simState.current;
+
+        if (equipment.syringe) {
+          const gasProduced = type === 'explosion' ? 20 * intensity : type === 'gas' ? 10 * intensity : 0.5 * intensity;
+          s.gasVolume = Math.min(100, s.gasVolume + gasProduced);
+        }
+
+        if (label) {
+          setUiState((prev) => ({ ...prev, activeReaction: label }));
+        } else if (type === 'explosion') {
+          setUiState((prev) => ({ ...prev, activeReaction: 'Explosion!' }));
+        }
+
+        if (type === 'explosion') {
+          for (let i = 0; i < 40 * intensity; i++) {
+            s.particles.push({
+              type: 'fire',
+              x: 220 + (Math.random() - 0.5) * 110,
+              y: 350 - s.volume * 0.6,
+              vx: (Math.random() - 0.5) * 5,
+              vy: -2 - Math.random() * 5,
+              life: 1.0,
+              size: 5 + Math.random() * 15,
+              color: Math.random() > 0.5 ? '#ef4444' : '#f97316'
+            });
+          }
+          applyThermalChange(50 * intensity, 0.02);
+        } else if (type === 'steam' || type === 'gas') {
+          if (type === 'steam') applyThermalChange(1.2 * intensity, 0.008);
+          if (type === 'gas') applyThermalChange(0.8 * intensity, 0.007);
+          if (!equipment.syringe || s.gasVolume >= 100) {
+            s.particles.push({
+              type: 'steam',
+              x: 220 + (Math.random() - 0.5) * 180,
+              y: 350 - s.volume * 0.6,
+              vx: (Math.random() - 0.5) * 2,
+              vy: -2 - Math.random() * 2,
+              life: 1.0,
+              size: 20 + Math.random() * 30,
+              rotation: Math.random() * Math.PI
+            });
+          }
+        }
+
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 2000);
+      };
+
+      const calculatePH = (contents, volume) => {
+        if (volume === 0) return 7.0;
+        const acidUnits = (contents.hcl || 0) * 10;
+        const baseUnits = (contents.naoh || 0) * 10;
+        const net = baseUnits - acidUnits;
+        const concentration = net / (volume / 50);
+        if (concentration === 0) return 7.0;
+        const deviation = Math.min(7, Math.max(-6, concentration));
+        return 7.0 + deviation;
+      };
+
+      const getDoseConfig = (chem) => {
+        if (chem.type === 'liquid') {
+          return { label: 'Volume', unit: 'mL', min: 10, max: 120, step: 10, defaultValue: 50 };
+        }
+        return { label: 'Mass', unit: 'g', min: 0.2, max: 5, step: 0.2, defaultValue: 1 };
+      };
+
+      const addChemical = (chemId, customDose = null) => {
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem) return;
+
+        const s = simState.current;
+        const dose = customDose ?? (chem.type === 'liquid' ? 50 : 1);
+        s.contents[chem.id] = (s.contents[chem.id] || 0) + dose;
+
+        if (chem.type === 'liquid') {
+          s.color = mixColors(s.color, chem.color, s.volume, dose);
+          s.volume = Math.min(s.volume + dose, 400);
+        } else {
+          const particleCount = Math.max(1, Math.min(18, Math.round(dose * 4)));
+          for (let i = 0; i < particleCount; i += 1) {
+            s.particles.push({
+              type: 'solid',
+              x: 220 + (Math.random() - 0.5) * 60,
+              y: 100 - Math.random() * 20,
+              vx: (Math.random() - 0.5) * 0.4,
+              vy: 2 + Math.random() * 2,
+              life: 1.0,
+              size: 5 + Math.random() * 4,
+              color: `rgba(${chem.color.join(',')})`,
+              chemId: chem.id
+            });
+          }
+        }
+
+        if (chem.special === 'indicator') s.indicatorPresent = true;
+
+        if (chem.id === 'sodium' && (s.contents.water > 0 || s.volume > 10)) {
+          triggerReaction('explosion', 2);
+          s.contents.sodium = 0;
+          s.contents.naoh = (s.contents.naoh || 0) + 1;
+        } else if (chem.id === 'water' && s.contents.sodium > 0) {
+          triggerReaction('explosion', s.contents.sodium);
+          s.contents.sodium = 0;
+        }
+
+        if ((chem.id === 'hcl' && s.contents.naoh > 0) || (chem.id === 'naoh' && s.contents.hcl > 0)) {
+          const neutralized = Math.min(s.contents.hcl || 0, s.contents.naoh || 0);
+          s.contents.hcl = Math.max(0, (s.contents.hcl || 0) - neutralized);
+          s.contents.naoh = Math.max(0, (s.contents.naoh || 0) - neutralized);
+          applyThermalChange(10, 0.016);
+          triggerReaction('steam', 1, 'Neutralization: HCl + NaOH');
+        }
+
+        if ((chem.id === 'mg' && s.contents.hcl > 0) || (chem.id === 'hcl' && s.contents.mg > 0)) {
+          const reactedMg = Math.min(2.5, s.contents.mg || 0);
+          applyThermalChange(6 + reactedMg * 2, 0.018);
+          s.contents.mg = Math.max(0, (s.contents.mg || 0) - reactedMg);
+          s.contents.hcl = Math.max(0, (s.contents.hcl || 0) - 22 * reactedMg);
+          triggerReaction('gas', Math.max(1, reactedMg), 'Mg + HCl → H₂ gas');
+        }
+
+        if ((chem.id === 'cuso4' && s.contents.water > 0) || (chem.id === 'water' && s.contents.cuso4 > 0)) {
+          s.color = mixColors(s.color, [30, 144, 255, 0.6], s.volume, 20);
+          triggerReaction('steam', 0.1, 'CuSO₄ dissolves in water');
+        }
+
+        if ((chem.id === 'nh4no3' && s.contents.water > 0) || (chem.id === 'water' && s.contents.nh4no3 > 0)) {
+          const cooling = Math.min(16, 4 + (s.contents.nh4no3 || 1) * 1.8);
+          applyThermalChange(-cooling, 0.022);
+          triggerReaction('steam', 0.1, 'NH₄NO₃ + H₂O (endothermic)');
+        }
+
+        s.ph = calculatePH(s.contents, s.volume);
+
+        setUiState((prev) => ({
+          ...prev,
+          volume: Math.round(s.volume),
+          ph: s.ph,
+          temp: Math.round(s.temp)
+        }));
+      };
+
+      const clearBeaker = () => {
+        simState.current = {
+          volume: 0,
+          temp: 20,
+          tempEffect: 0,
+          ph: 7.0,
+          gasVolume: 0,
+          contents: {},
+          color: [200, 230, 255, 0],
+          particles: [],
+          indicatorPresent: false,
+          boiling: false
+        };
+        setUiState({ temp: 20, volume: 0, ph: 7.0, gasVolume: 0, activeReaction: null });
+      };
+
+      const handleDragStart = (event, chemId) => {
+        event.dataTransfer.setData('chemId', chemId);
+        event.dataTransfer.effectAllowed = 'copy';
+      };
+
+      const openDoseEditor = (chemId) => {
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem) return;
+        const cfg = getDoseConfig(chem);
+        setDoseEditor({ chemId, amount: cfg.defaultValue });
+      };
+
+      const handleDragOver = (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setIsBeakerTargeted(true);
+      };
+
+      const handleDrop = (event) => {
+        event.preventDefault();
+        const chemId = event.dataTransfer.getData('chemId');
+        if (chemId) openDoseEditor(chemId);
+        setIsBeakerTargeted(false);
+      };
+
+      const handleDragEnter = (event) => {
+        event.preventDefault();
+        setIsBeakerTargeted(true);
+      };
+
+      const handleDragLeave = () => {
+        setIsBeakerTargeted(false);
+      };
+
+      const confirmDose = () => {
+        if (!doseEditor) return;
+        addChemical(doseEditor.chemId, Number(doseEditor.amount));
+        setDoseEditor(null);
+      };
+
+      const cancelDose = () => {
+        setDoseEditor(null);
+      };
+
+      const draw = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const s = simState.current;
+
+        s.temp += s.tempEffect;
+        s.tempEffect *= 0.992;
+        if (Math.abs(s.tempEffect) < 0.0005) s.tempEffect = 0;
+
+        if (s.temp > 20) s.temp -= 0.008;
+        if (s.temp < 20) s.temp += 0.008;
+        s.temp = Math.max(-10, Math.min(220, s.temp));
+
+        if (s.temp >= 100 && s.volume > 0) {
+          s.volume -= 0.1;
+          s.boiling = true;
+          if (Math.random() > 0.8) {
+            s.particles.push({
+              type: 'bubble',
+              x: 170 + Math.random() * 140,
+              y: 470,
+              vx: Math.random() - 0.5,
+              vy: -2 - Math.random(),
+              life: 1.0,
+              size: 2 + Math.random() * 4,
+              color: 'rgba(255,255,255,0.4)'
+            });
+          }
+          if (Math.random() > 0.9) triggerReaction('steam');
+        } else {
+          s.boiling = false;
+        }
+
+        s.particles.forEach((particle) => {
+          particle.x += particle.vx;
+          particle.y += particle.vy;
+          particle.life -= 0.01;
+          if (particle.type === 'solid') {
+            const bottomY = 490;
+            if (particle.y > bottomY) {
+              particle.y = bottomY;
+              particle.vy = 0;
+              particle.life += 0.009;
+            }
+          }
+        });
+        s.particles = s.particles.filter((particle) => particle.life > 0);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const BX = 80;
+        const BY = 70;
+        const BW = 280;
+        const BH = 420;
+        const RIM_H = 18;
+        const bottomCurve = 18;
+
+        const buildOuterBeakerPath = () => {
+          ctx.beginPath();
+          ctx.moveTo(BX, BY + 2);
+          ctx.lineTo(BX, BY + BH - bottomCurve);
+          ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve, BX + BW, BY + BH - bottomCurve);
+          ctx.lineTo(BX + BW, BY + 2);
+          ctx.closePath();
+        };
+
+        const buildInnerBeakerPath = () => {
+          ctx.beginPath();
+          ctx.moveTo(BX + 8, BY + 8);
+          ctx.lineTo(BX + 8, BY + BH - bottomCurve - 2);
+          ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve - 4, BX + BW - 8, BY + BH - bottomCurve - 2);
+          ctx.lineTo(BX + BW - 8, BY + 8);
+          ctx.closePath();
+        };
+
+        ctx.save();
+        ctx.shadowColor = isBeakerTargeted ? 'rgba(56, 189, 248, 0.55)' : 'rgba(15, 23, 42, 0.45)';
+        ctx.shadowBlur = isBeakerTargeted ? 24 : 12;
+        buildOuterBeakerPath();
+        ctx.clip();
+
+        const bodyGradient = ctx.createLinearGradient(BX, BY, BX + BW, BY + BH);
+        bodyGradient.addColorStop(0, 'rgba(255,255,255,0.08)');
+        bodyGradient.addColorStop(0.45, 'rgba(255,255,255,0.02)');
+        bodyGradient.addColorStop(1, 'rgba(148,163,184,0.1)');
+        ctx.fillStyle = bodyGradient;
+        ctx.fillRect(BX, BY, BW, BH + bottomCurve + 8);
+
+        const leftHighlight = ctx.createLinearGradient(BX, BY, BX + 28, BY);
+        leftHighlight.addColorStop(0, 'rgba(255,255,255,0.38)');
+        leftHighlight.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = leftHighlight;
+        ctx.fillRect(BX + 2, BY + 8, 26, BH + bottomCurve);
+
+        const rightShade = ctx.createLinearGradient(BX + BW - 18, BY, BX + BW, BY);
+        rightShade.addColorStop(0, 'rgba(15,23,42,0)');
+        rightShade.addColorStop(1, 'rgba(15,23,42,0.34)');
+        ctx.fillStyle = rightShade;
+        ctx.fillRect(BX + BW - 18, BY + 8, 16, BH + bottomCurve);
+        ctx.restore();
+
+        const rimGloss = ctx.createLinearGradient(BX + 10, BY, BX + BW - 10, BY);
+        rimGloss.addColorStop(0, 'rgba(255,255,255,0.12)');
+        rimGloss.addColorStop(0.5, 'rgba(255,255,255,0.03)');
+        rimGloss.addColorStop(1, 'rgba(255,255,255,0.1)');
+        ctx.fillStyle = rimGloss;
+        ctx.fillRect(BX + 10, BY + 2, BW - 20, 6);
+
+        ctx.save();
+        buildOuterBeakerPath();
+        ctx.clip();
+        const baseShade = ctx.createLinearGradient(BX + 10, BY + BH - 16, BX + 10, BY + BH + 8);
+        baseShade.addColorStop(0, 'rgba(15,23,42,0.02)');
+        baseShade.addColorStop(1, 'rgba(255,255,255,0.12)');
+        ctx.fillStyle = baseShade;
+        ctx.fillRect(BX + 10, BY + BH - 16, BW - 20, 30);
+        ctx.restore();
+
+        if (equipment.syringe) {
+          const SYRINGE_X = 392;
+          const SYRINGE_Y = 170;
+          const MAX_PLUNGE = 100;
+          const plungeHeight = (s.gasVolume / 100) * MAX_PLUNGE;
+
+          ctx.beginPath();
+          ctx.moveTo(BX + BW - 10, BY + 20);
+          ctx.bezierCurveTo(BX + BW + 30, BY + 20, SYRINGE_X - 20, SYRINGE_Y + 150, SYRINGE_X, SYRINGE_Y + 150);
+          ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)';
+          ctx.lineWidth = 6;
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          ctx.lineWidth = 2;
+          ctx.fillRect(SYRINGE_X, SYRINGE_Y, 40, 160);
+          ctx.strokeRect(SYRINGE_X, SYRINGE_Y, 40, 160);
+
+          ctx.fillStyle = 'rgba(255,255,255,0.5)';
+          ctx.font = '10px monospace';
+          for (let i = 0; i <= 4; i += 1) {
+            const markY = SYRINGE_Y + 160 - i * 40;
+            ctx.fillRect(SYRINGE_X, markY, 10, 1);
+            ctx.fillText(`${i * 25}`, SYRINGE_X + 15, markY + 3);
+          }
+
+          const plungerY = SYRINGE_Y + 160 - plungeHeight - 10;
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillRect(SYRINGE_X + 2, plungerY, 36, 10);
+          ctx.fillRect(SYRINGE_X + 18, SYRINGE_Y - 20, 4, plungerY - (SYRINGE_Y - 20));
+          ctx.fillRect(SYRINGE_X + 10, SYRINGE_Y - 20, 20, 4);
+        }
+
+        let displayColor = [...s.color];
+        if (s.indicatorPresent && s.volume > 0) {
+          if (s.ph < 6) displayColor = [255, 50, 50, 0.8];
+          else if (s.ph > 8) displayColor = [128, 0, 128, 0.8];
+          else displayColor = [50, 200, 50, 0.8];
+        }
+
+        const solidChemicals = CHEMICALS.filter((item) => item.type === 'solid' || item.type === 'solid_powder');
+        let totalSolidMass = 0;
+        let sedimentR = 0;
+        let sedimentG = 0;
+        let sedimentB = 0;
+
+        solidChemicals.forEach((chem) => {
+          const mass = s.contents[chem.id] || 0;
+          if (mass <= 0) return;
+          totalSolidMass += mass;
+          sedimentR += chem.color[0] * mass;
+          sedimentG += chem.color[1] * mass;
+          sedimentB += chem.color[2] * mass;
+        });
+
+        ctx.save();
+        buildInnerBeakerPath();
+        ctx.clip();
+
+        if (s.volume > 0) {
+          const fillHeight = (s.volume / 400) * (BH - 20);
+          const surfaceY = BY + BH - fillHeight;
+          const gradient = ctx.createLinearGradient(BX, surfaceY, BX, BY + BH);
+          gradient.addColorStop(0, `rgba(${displayColor[0]}, ${displayColor[1]}, ${displayColor[2]}, ${displayColor[3]})`);
+          gradient.addColorStop(1, `rgba(${displayColor[0] - 30}, ${displayColor[1] - 30}, ${displayColor[2] - 30}, ${displayColor[3] + 0.1})`);
+          ctx.fillStyle = gradient;
+          ctx.fillRect(BX + 8, surfaceY, BW - 16, fillHeight + 18);
+
+          const liquidGloss = ctx.createLinearGradient(BX + 8, surfaceY, BX + BW - 8, surfaceY);
+          liquidGloss.addColorStop(0, 'rgba(255,255,255,0.18)');
+          liquidGloss.addColorStop(0.4, 'rgba(255,255,255,0.04)');
+          liquidGloss.addColorStop(1, 'rgba(255,255,255,0.12)');
+          ctx.fillStyle = liquidGloss;
+          ctx.fillRect(BX + 8, surfaceY, BW - 16, 8);
+
+          ctx.beginPath();
+          ctx.ellipse(BX + BW / 2, surfaceY, BW / 2 - 10, 4, 0, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        if (totalSolidMass > 0) {
+          const sedimentHeight = Math.min(56, 5 + totalSolidMass * 4.5);
+          const sedimentY = BY + BH - sedimentHeight - 2;
+          const sedimentColor = [
+            Math.round(sedimentR / totalSolidMass),
+            Math.round(sedimentG / totalSolidMass),
+            Math.round(sedimentB / totalSolidMass)
+          ];
+
+          const sedimentGradient = ctx.createLinearGradient(BX, sedimentY, BX, BY + BH);
+          sedimentGradient.addColorStop(0, `rgba(${sedimentColor[0]}, ${sedimentColor[1]}, ${sedimentColor[2]}, 0.65)`);
+          sedimentGradient.addColorStop(1, `rgba(${Math.max(0, sedimentColor[0] - 30)}, ${Math.max(0, sedimentColor[1] - 30)}, ${Math.max(0, sedimentColor[2] - 30)}, 0.9)`);
+          ctx.fillStyle = sedimentGradient;
+          ctx.fillRect(BX + 10, sedimentY, BW - 20, sedimentHeight + 14);
+
+          ctx.beginPath();
+          ctx.ellipse(BX + BW / 2, sedimentY, BW / 2 - 12, Math.max(3, sedimentHeight * 0.15), 0, Math.PI, 0, true);
+          ctx.strokeStyle = `rgba(${Math.min(255, sedimentColor[0] + 30)}, ${Math.min(255, sedimentColor[1] + 30)}, ${Math.min(255, sedimentColor[2] + 30)}, 0.55)`;
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+
+        s.particles.forEach((particle) => {
+          ctx.save();
+          if (particle.type === 'bubble' || particle.type === 'solid') {
+            buildInnerBeakerPath();
+            ctx.clip();
+          }
+          ctx.globalAlpha = Math.max(0, particle.life);
+          ctx.translate(particle.x, particle.y);
+          if (particle.type === 'bubble') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            ctx.stroke();
+          } else if (particle.type === 'steam') {
+            ctx.rotate(particle.rotation);
+            ctx.fillStyle = 'rgba(200, 200, 200, 0.2)';
+            ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          } else if (particle.type === 'fire') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
+          } else if (particle.type === 'solid') {
+            ctx.fillStyle = particle.color;
+            ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          }
+          ctx.restore();
+        });
+
+        ctx.beginPath();
+        ctx.moveTo(BX, BY + 2);
+        ctx.lineTo(BX, BY + BH - bottomCurve);
+        ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve, BX + BW, BY + BH - bottomCurve);
+        ctx.lineTo(BX + BW, BY + 2);
+        ctx.strokeStyle = isBeakerTargeted ? 'rgba(125, 211, 252, 0.9)' : 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(BX + 9, BY + 10);
+        ctx.lineTo(BX + 9, BY + BH - bottomCurve - 2);
+        ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve - 4, BX + BW - 9, BY + BH - bottomCurve - 2);
+        ctx.lineTo(BX + BW - 9, BY + 10);
+        ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        const baseGlow = ctx.createRadialGradient(BX + BW / 2, BY + BH - 4, 8, BX + BW / 2, BY + BH - 4, BW / 2 - 14);
+        baseGlow.addColorStop(0, 'rgba(255,255,255,0.12)');
+        baseGlow.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = baseGlow;
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + BH - 2, BW / 2 - 12, 10, 0, Math.PI, 0, true);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + 1, BW / 2, RIM_H / 2, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = isBeakerTargeted ? 'rgba(186, 230, 253, 0.95)' : 'rgba(248,250,252,0.7)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + 4, BW / 2 - 10, RIM_H / 2 - 2, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '12px monospace';
+        for (let i = 1; i <= 4; i += 1) {
+          const y = BY + BH - i * (BH / 4.5);
+          ctx.fillRect(BX + 10, y, 15, 2);
+          ctx.fillText(`${i * 100}ml`, BX + 30, y + 4);
+        }
+
+        requestRef.current = requestAnimationFrame(draw);
+      }, [equipment.syringe, isBeakerTargeted]);
+
+      useEffect(() => {
+        requestRef.current = requestAnimationFrame(draw);
+        return () => cancelAnimationFrame(requestRef.current);
+      }, [draw]);
+
+      useEffect(() => {
+        const interval = setInterval(() => {
+          setUiState((prev) => ({
+            ...prev,
+            temp: Math.round(simState.current.temp),
+            volume: Math.round(simState.current.volume),
+            ph: Number(simState.current.ph.toFixed(1)),
+            gasVolume: Math.round(simState.current.gasVolume)
+          }));
+        }, 200);
+        return () => clearInterval(interval);
+      }, []);
+
+      const changeTemp = (delta) => {
+        applyThermalChange(delta, 0.01);
+        simState.current.temp = Math.max(-10, Math.min(220, simState.current.temp));
+        if (delta > 0) {
+          simState.current.particles.push({
+            type: 'fire',
+            x: 220 + (Math.random() - 0.5) * 64,
+            y: 560,
+            vx: 0,
+            vy: -1,
+            life: 0.5,
+            size: 5,
+            color: '#f59e0b'
+          });
+        }
+      };
+
+      const toggleEquipment = (item) => {
+        setEquipment((prev) => ({ ...prev, [item]: !prev[item] }));
+        if (item === 'syringe' && !equipment.syringe) {
+          simState.current.gasVolume = 0;
+        }
+      };
+
+      return (
+        <div className="flex flex-col md:flex-row h-screen w-full bg-slate-900 text-slate-100 font-sans overflow-hidden">
+          <div className="w-full md:w-80 bg-slate-800 border-r border-slate-700 flex flex-col z-20 shadow-xl">
+            <div className="p-5 border-b border-slate-700 bg-slate-800">
+              <h1 className="text-xl font-bold flex items-center gap-2 text-sky-400">
+                <FlaskConical className="w-6 h-6" />
+                ChemLab Pro
+              </h1>
+              <p className="text-xs text-slate-400 mt-1">Virtual Workbench</p>
+            </div>
+
+            <div className="flex border-b border-slate-700">
+              <button
+                onClick={() => setActiveTab('chemicals')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chemicals' ? 'text-sky-400 border-b-2 border-sky-400 bg-slate-700/50' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Chemicals
+              </button>
+              <button
+                onClick={() => setActiveTab('equipment')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'equipment' ? 'text-sky-400 border-b-2 border-sky-400 bg-slate-700/50' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Equipment
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {activeTab === 'chemicals' ? (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Drag chemicals to the beaker</p>
+                  {CHEMICALS.map((chem) => (
+                    <div
+                      key={chem.id}
+                      draggable
+                      onDragStart={(event) => handleDragStart(event, chem.id)}
+                      onClick={() => addChemical(chem.id)}
+                      className="w-full group relative p-3 rounded-xl bg-slate-700/50 hover:bg-slate-600 border border-slate-600 hover:border-sky-500 transition-all flex items-center gap-4 text-left cursor-grab active:cursor-grabbing"
+                    >
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 border border-slate-600 text-lg shadow-sm group-hover:scale-110 transition-transform">
+                        {chem.icon}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-200">{chem.name}</div>
+                        <div className="text-xs text-slate-400">{chem.desc}</div>
+                      </div>
+                      <GripVertical className="absolute right-3 top-3 text-slate-600 w-4 h-4 opacity-50" />
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Toggle apparatus on bench</p>
+                  <button
+                    onClick={() => toggleEquipment('syringe')}
+                    className={`w-full p-4 rounded-xl border transition-all flex items-center gap-4 text-left ${equipment.syringe ? 'bg-sky-900/30 border-sky-500' : 'bg-slate-700/30 border-slate-600 hover:bg-slate-700'}`}
+                  >
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border text-lg ${equipment.syringe ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>
+                      <Syringe className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className={`font-semibold ${equipment.syringe ? 'text-sky-400' : 'text-slate-200'}`}>Gas Syringe</div>
+                      <div className="text-xs text-slate-400">Collects reaction gases</div>
+                    </div>
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 bg-slate-800/80 backdrop-blur">
+              <button
+                onClick={clearBeaker}
+                className="w-full py-3 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium"
+              >
+                <Trash2 className="w-4 h-4" />
+                Empty Beaker
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="flex-1 relative flex flex-col bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
+              <div className="flex gap-4 md:gap-8 bg-slate-800/80 backdrop-blur-md p-3 md:p-4 rounded-2xl border border-slate-700 shadow-2xl">
+                <MetricItem
+                  label="Temperature"
+                  value={`${uiState.temp}°C`}
+                  icon={<Thermometer className="w-4 h-4 text-orange-400" />}
+                  color={uiState.temp > 80 ? 'text-red-400' : 'text-orange-400'}
+                />
+                <div className="w-px bg-slate-600/50" />
+                <MetricItem
+                  label="Volume"
+                  value={`${uiState.volume} mL`}
+                  icon={<Droplets className="w-4 h-4 text-sky-400" />}
+                  color="text-sky-400"
+                />
+                <div className="w-px bg-slate-600/50" />
+                <MetricItem
+                  label="pH Level"
+                  value={uiState.ph.toFixed(1)}
+                  icon={<Zap className="w-4 h-4 text-emerald-400" />}
+                  color={uiState.ph < 6 ? 'text-red-400' : uiState.ph > 8 ? 'text-purple-400' : 'text-emerald-400'}
+                />
+                {equipment.syringe && (
+                  <>
+                    <div className="w-px bg-slate-600/50" />
+                    <MetricItem
+                      label="Gas Collected"
+                      value={`${uiState.gasVolume} mL`}
+                      icon={<Gauge className="w-4 h-4 text-slate-300" />}
+                      color="text-slate-200"
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {uiState.activeReaction && (
+              <div className="absolute top-28 left-0 right-0 flex justify-center z-20 pointer-events-none">
+                <div className="animate-bounce bg-amber-500 text-slate-900 px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2">
+                  <Flame className="w-5 h-5" />
+                  {uiState.activeReaction}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 flex items-center justify-center relative">
+              <div
+                className="absolute inset-0 opacity-10 pointer-events-none"
+                style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+              />
+
+              <div className={`transition-all duration-300 ${activeTab === 'chemicals' ? 'scale-100' : 'scale-95'}`}>
+                <canvas ref={canvasRef} width={520} height={640} className="z-10 cursor-crosshair" />
+              </div>
+            </div>
+
+            {doseEditor && (
+              <DoseEditor
+                doseEditor={doseEditor}
+                chemicals={CHEMICALS}
+                getDoseConfig={getDoseConfig}
+                onChange={(value) => setDoseEditor((prev) => ({ ...prev, amount: Number(value) }))}
+                onCancel={cancelDose}
+                onConfirm={confirmDose}
+              />
+            )}
+
+            <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+              <HoldButton
+                onHold={() => changeTemp(1.5)}
+                className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                icon={<Flame className="w-6 h-6" />}
+                label="HEAT"
+              />
+              <HoldButton
+                onHold={() => changeTemp(-1.5)}
+                className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+                icon={<Snowflake className="w-6 h-6" />}
+                label="COOL"
+              />
+            </div>
+          </div>
+
+          <HelpModal />
+        </div>
+      );
+    }
+
+    function MetricItem({ label, value, icon, color }) {
+      return (
+        <div className="flex flex-col items-center min-w-[80px]">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
+            {icon} {label}
+          </div>
+          <div className={`text-2xl font-mono font-bold ${color}`}>{value}</div>
+        </div>
+      );
+    }
+
+    function HoldButton({ onHold, className, icon, label }) {
+      const intervalRef = useRef(null);
+
+      const start = (event) => {
+        event.preventDefault();
+        onHold();
+        intervalRef.current = setInterval(onHold, 50);
+      };
+
+      const stop = (event) => {
+        if (event) event.preventDefault();
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      };
+
+      return (
+        <button
+          onMouseDown={start}
+          onMouseUp={stop}
+          onMouseLeave={stop}
+          onTouchStart={start}
+          onTouchEnd={stop}
+          className={`flex items-center gap-3 px-8 py-4 rounded-full font-bold transition-all active:scale-95 select-none ${className}`}
+        >
+          {icon}
+          <span>{label}</span>
+        </button>
+      );
+    }
+
+    function DoseEditor({ doseEditor, chemicals, getDoseConfig, onChange, onCancel, onConfirm }) {
+      const chem = chemicals.find((item) => item.id === doseEditor.chemId);
+      if (!chem) return null;
+      const cfg = getDoseConfig(chem);
+      const amountText = chem.type === 'liquid' ? Math.round(doseEditor.amount) : doseEditor.amount.toFixed(1);
+      const progress = ((doseEditor.amount - cfg.min) / (cfg.max - cfg.min)) * 100;
+
+      return (
+        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 w-[min(92vw,540px)] dose-slide-up">
+          <div className="rounded-2xl border border-slate-600 bg-slate-800/95 backdrop-blur-lg shadow-2xl p-4 md:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-400">Drag Drop Dosing</p>
+                <h3 className="text-slate-100 font-semibold">{chem.name}</h3>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-400">Selected {cfg.label}</p>
+                <p className="text-xl font-mono font-bold text-sky-300">{amountText} {cfg.unit}</p>
+              </div>
+            </div>
+
+            <div className="relative h-14 rounded-xl bg-slate-900/70 border border-slate-700 mb-4 overflow-hidden">
+              <div className="absolute left-1/2 -translate-x-1/2 top-0 w-1 h-10 bg-sky-300 stream-pulse" style={{ height: `${24 + progress * 0.18}px` }} />
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-1 w-28 h-5 rounded-full border border-slate-500 bg-slate-700/40" />
+              <div className="absolute left-2 right-2 bottom-1 h-2 rounded-full bg-gradient-to-r from-cyan-500/30 to-blue-400/60" style={{ width: `${Math.max(8, progress)}%` }} />
+            </div>
+
+            <input
+              type="range"
+              min={cfg.min}
+              max={cfg.max}
+              step={cfg.step}
+              value={doseEditor.amount}
+              onChange={(event) => onChange(event.target.value)}
+              className="w-full accent-sky-400"
+            />
+
+            <div className="mt-4 flex gap-3 justify-end">
+              <button
+                onClick={onCancel}
+                className="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-600 text-white font-semibold transition-colors"
+              >
+                Add to Beaker
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function HelpModal() {
+      const [isOpen, setIsOpen] = useState(true);
+      if (!isOpen) return null;
+
+      return (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl relative">
+            <button onClick={() => setIsOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-xl font-bold text-sky-400 mb-4 flex items-center gap-2">
+              <Info className="w-5 h-5" /> Lab Guide
+            </h2>
+            <ul className="space-y-3 text-slate-300 text-sm">
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">A</span>
+                <span>Mg + HCl generates H₂ gas and warms the beaker.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">B</span>
+                <span>CuSO₄ + H₂O forms a blue solution.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">C</span>
+                <span>NH₄NO₃ + H₂O is endothermic and cools the beaker.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">D</span>
+                <span>HCl + NaOH neutralizes toward pH 7.</span>
+              </li>
+            </ul>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="mt-6 w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 rounded-lg transition-colors"
+            >
+              Start Experimenting
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ChemistryLab />);
+  </script>
+</body>
+</html>
