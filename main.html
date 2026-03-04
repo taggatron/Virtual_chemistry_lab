@@ -874,55 +874,285 @@
         }
 
         if (equipment.scales) {
-          const SX = 24;
-          const SY = 534;
-          const SW = 152;
-          const SH = 86;
+          const practicalLayout = activePractical === 'conservation-of-mass';
+          const SX = practicalLayout ? 26 : 24;
+          const SY = practicalLayout ? 526 : 534;
+          const SW = practicalLayout ? 164 : 152;
+          const SH = practicalLayout ? 92 : 86;
 
-          const scaleBody = ctx.createLinearGradient(SX, SY, SX + SW, SY + SH);
-          scaleBody.addColorStop(0, 'rgba(51,65,85,0.96)');
-          scaleBody.addColorStop(1, 'rgba(30,41,59,0.98)');
-          ctx.fillStyle = scaleBody;
-          ctx.strokeStyle = 'rgba(203,213,225,0.55)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.roundRect(SX, SY, SW, SH, 10);
+          // -----------------------------
+          // Helpers (safe to keep inline)
+          // -----------------------------
+          const rr = (x, y, w, h, r) => {
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, r);
+          };
+
+          const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+          // Subtle noise for "painted metal" / realism (cheap + deterministic-ish)
+          const addNoise = (x, y, w, h, alpha = 0.06, step = 3) => {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (let yy = y; yy < y + h; yy += step) {
+              for (let xx = x; xx < x + w; xx += step) {
+                const n = (Math.random() * 2 - 1) * 12; // -12..12
+                ctx.fillStyle = `rgb(${128 + n},${128 + n},${128 + n})`;
+                ctx.fillRect(xx, yy, 1, 1);
+              }
+            }
+            ctx.restore();
+          };
+
+          // -----------------------------
+          // 3D base / shadow
+          // -----------------------------
+          ctx.save();
+
+          // Drop shadow on the whole device (gives "lift" from the surface)
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 14;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 8;
+
+          // Outer body (painted metal, slightly warm/cool variation)
+          const bodyGrad = ctx.createLinearGradient(SX, SY, SX + SW, SY + SH);
+          bodyGrad.addColorStop(0, 'rgba(71,85,105,0.98)');   // slate-600
+          bodyGrad.addColorStop(0.45, 'rgba(30,41,59,0.985)'); // slate-800
+          bodyGrad.addColorStop(1, 'rgba(15,23,42,0.99)');     // slate-900
+
+          ctx.fillStyle = bodyGrad;
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(226,232,240,0.28)';
+
+          // Slight perspective feel: thicker bottom edge (a “base lip”)
+          rr(SX, SY, SW, SH, 12);
           ctx.fill();
           ctx.stroke();
 
-          ctx.fillStyle = 'rgba(15,23,42,0.96)';
-          ctx.beginPath();
-          ctx.roundRect(SX + 14, SY + 14, SW - 28, 28, 5);
+          // Remove shadow for internal details (avoid muddying)
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+
+          // Inner bevel (gives depth around the face)
+          const bevelInset = 2.5;
+          const bevelGrad = ctx.createLinearGradient(SX, SY, SX, SY + SH);
+          bevelGrad.addColorStop(0, 'rgba(255,255,255,0.16)');
+          bevelGrad.addColorStop(0.25, 'rgba(255,255,255,0.02)');
+          bevelGrad.addColorStop(1, 'rgba(0,0,0,0.28)');
+          ctx.strokeStyle = bevelGrad;
+          ctx.lineWidth = 2;
+          rr(SX + bevelInset, SY + bevelInset, SW - bevelInset * 2, SH - bevelInset * 2, 10);
+          ctx.stroke();
+
+          // Subtle texture (optional; comment out if you want it perfectly clean)
+          addNoise(SX + 6, SY + 6, SW - 12, SH - 12, 0.045, 3);
+
+          // Ambient occlusion under top surface (shadow just inside the top edge)
+          const aoTop = ctx.createLinearGradient(SX, SY, SX, SY + 18);
+          aoTop.addColorStop(0, 'rgba(0,0,0,0.35)');
+          aoTop.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = aoTop;
+          rr(SX + 4, SY + 4, SW - 8, 16, 10);
           ctx.fill();
 
+          // -----------------------------
+          // Display bezel + glass
+          // -----------------------------
+          const bezelX = SX + 12;
+          const bezelY = SY + 12;
+          const bezelW = SW - 24;
+          const bezelH = 32;
+
+          // Bezel base
+          const bezelGrad = ctx.createLinearGradient(bezelX, bezelY, bezelX + bezelW, bezelY + bezelH);
+          bezelGrad.addColorStop(0, 'rgba(2,6,23,0.95)');
+          bezelGrad.addColorStop(1, 'rgba(15,23,42,0.98)');
+          ctx.fillStyle = bezelGrad;
+          ctx.strokeStyle = 'rgba(148,163,184,0.28)';
+          ctx.lineWidth = 1;
+          rr(bezelX, bezelY, bezelW, bezelH, 7);
+          ctx.fill();
+          ctx.stroke();
+
+          // Glass sheen (diagonal highlight)
+          const glass = ctx.createLinearGradient(bezelX, bezelY, bezelX + bezelW, bezelY + bezelH);
+          glass.addColorStop(0.0, 'rgba(255,255,255,0.20)');
+          glass.addColorStop(0.25, 'rgba(255,255,255,0.05)');
+          glass.addColorStop(0.55, 'rgba(255,255,255,0.00)');
+          glass.addColorStop(1.0, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = glass;
+          rr(bezelX + 1, bezelY + 1, bezelW - 2, bezelH - 2, 6);
+          ctx.fill();
+
+          // Display backlight glow (soft, behind the digits)
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const glow = ctx.createRadialGradient(
+            bezelX + bezelW * 0.35, bezelY + bezelH * 0.55, 4,
+            bezelX + bezelW * 0.35, bezelY + bezelH * 0.55, 36
+          );
+          glow.addColorStop(0, 'rgba(94,234,212,0.22)'); // teal glow
+          glow.addColorStop(1, 'rgba(94,234,212,0.00)');
+          ctx.fillStyle = glow;
+          rr(bezelX + 2, bezelY + 2, bezelW - 4, bezelH - 4, 6);
+          ctx.fill();
+          ctx.restore();
+
+          // Digits (with subtle shadow to pop)
+          const text = `${simState.current.scaleSampleMass.toFixed(2)} g`;
+          ctx.save();
+          ctx.font = '700 16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
           ctx.fillStyle = '#5eead4';
-          ctx.font = 'bold 15px monospace';
-          ctx.fillText(`${simState.current.scaleSampleMass.toFixed(2)} g`, SX + 28, SY + 33);
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 2;
+          ctx.shadowOffsetY = 1;
+          ctx.fillText(text, bezelX + 14, bezelY + 22);
+          ctx.restore();
 
-          ctx.fillStyle = 'rgba(148,163,184,0.28)';
-          ctx.beginPath();
-          ctx.ellipse(SX + SW / 2, SY + 61, 42, 10, 0, 0, Math.PI * 2);
-          ctx.fill();
-          if (simState.current.scaleSampleMass > 0) {
-            ctx.fillStyle = '#f8fafc';
+          // Tiny indicator dots (adds realism)
+          ctx.save();
+          const dotY = bezelY + bezelH - 8;
+          for (let i = 0; i < 5; i++) {
+            const dx = bezelX + 14 + i * 10;
+            const on = i === clamp(Math.floor(simState.current.scaleSampleMass > 0 ? 3 : 1), 0, 4);
+            ctx.fillStyle = on ? 'rgba(94,234,212,0.9)' : 'rgba(148,163,184,0.35)';
             ctx.beginPath();
-            ctx.ellipse(SX + SW / 2, SY + 60, 15, 5, 0, 0, Math.PI * 2);
+            ctx.arc(dx, dotY, 1.2, 0, Math.PI * 2);
             ctx.fill();
           }
+          ctx.restore();
 
-          ctx.fillStyle = 'rgba(203,213,225,0.6)';
+          // -----------------------------
+          // Weighing pan (metallic, 3D)
+          // -----------------------------
+          const panCX = SX + SW / 2;
+          const panCY = SY + 60;
+
+          // Soft shadow beneath pan
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.28)';
           ctx.beginPath();
-          ctx.roundRect(SX + 18, SY + 72, 16, 8, 2);
-          ctx.roundRect(SX + SW - 34, SY + 72, 16, 8, 2);
+          ctx.ellipse(panCX, panCY + 3, 48, 12, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // Pan top (brushed steel)
+          ctx.save();
+          const panTop = ctx.createRadialGradient(panCX - 10, panCY - 6, 6, panCX, panCY, 54);
+          panTop.addColorStop(0, 'rgba(248,250,252,0.95)');
+          panTop.addColorStop(0.25, 'rgba(226,232,240,0.88)');
+          panTop.addColorStop(0.55, 'rgba(148,163,184,0.70)');
+          panTop.addColorStop(1, 'rgba(71,85,105,0.65)');
+          ctx.fillStyle = panTop;
+          ctx.strokeStyle = 'rgba(15,23,42,0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(panCX, panCY, 46, 11, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Pan rim highlight
+          ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(panCX, panCY - 1, 44, 10, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Pan specular streak (brushed look)
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+          for (let i = -18; i <= 18; i += 3) {
+            ctx.beginPath();
+            ctx.moveTo(panCX + i, panCY - 8);
+            ctx.lineTo(panCX + i + 10, panCY + 8);
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          // Sample on pan (more 3D + shadow)
+          if (simState.current.scaleSampleMass > 0) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.18)';
+            ctx.beginPath();
+            ctx.ellipse(panCX + 2, panCY + 1, 16, 5.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            const sampleGrad = ctx.createRadialGradient(panCX - 4, panCY - 2, 2, panCX, panCY, 20);
+            sampleGrad.addColorStop(0, 'rgba(248,250,252,0.98)');
+            sampleGrad.addColorStop(1, 'rgba(203,213,225,0.9)');
+            ctx.fillStyle = sampleGrad;
+            ctx.strokeStyle = 'rgba(71,85,105,0.35)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(panCX, panCY - 1, 15, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // -----------------------------
+          // Buttons (3D pill buttons)
+          // -----------------------------
+          const btnY = SY + 72;
+          const btnW = 18;
+          const btnH = 10;
+
+          const drawButton = (x) => {
+            // Button shadow
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.28)';
+            rr(x + 1, btnY + 2, btnW, btnH, 3);
+            ctx.fill();
+
+            // Button body gradient
+            const bg = ctx.createLinearGradient(x, btnY, x, btnY + btnH);
+            bg.addColorStop(0, 'rgba(226,232,240,0.85)');
+            bg.addColorStop(0.55, 'rgba(148,163,184,0.55)');
+            bg.addColorStop(1, 'rgba(100,116,139,0.70)');
+
+            ctx.fillStyle = bg;
+            ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+            ctx.lineWidth = 1;
+            rr(x, btnY, btnW, btnH, 3);
+            ctx.fill();
+            ctx.stroke();
+
+            // Button highlight
+            const hi = ctx.createLinearGradient(x, btnY, x, btnY + 5);
+            hi.addColorStop(0, 'rgba(255,255,255,0.55)');
+            hi.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = hi;
+            rr(x + 1, btnY + 1, btnW - 2, 4, 2);
+            ctx.fill();
+            ctx.restore();
+          };
+
+          drawButton(SX + 16);
+          drawButton(SX + SW - 34);
+
+          // -----------------------------
+          // Top gloss strip (more “3D casing”)
+          // -----------------------------
+          const topGloss = ctx.createLinearGradient(SX + 6, SY + 2, SX + SW - 6, SY + 22);
+          topGloss.addColorStop(0, 'rgba(255,255,255,0.22)');
+          topGloss.addColorStop(0.35, 'rgba(255,255,255,0.08)');
+          topGloss.addColorStop(1, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = topGloss;
+          rr(SX + 6, SY + 2, SW - 12, 18, 8);
           ctx.fill();
 
-          const scaleTopGloss = ctx.createLinearGradient(SX + 6, SY + 2, SX + SW - 6, SY + 16);
-          scaleTopGloss.addColorStop(0, 'rgba(255,255,255,0.22)');
-          scaleTopGloss.addColorStop(1, 'rgba(255,255,255,0)');
-          ctx.fillStyle = scaleTopGloss;
-          ctx.beginPath();
-          ctx.roundRect(SX + 6, SY + 2, SW - 12, 14, 5);
+          // Bottom edge “lip” highlight (gives thickness)
+          const lip = ctx.createLinearGradient(SX, SY + SH - 14, SX, SY + SH);
+          lip.addColorStop(0, 'rgba(0,0,0,0)');
+          lip.addColorStop(1, 'rgba(255,255,255,0.10)');
+          ctx.fillStyle = lip;
+          rr(SX + 4, SY + SH - 12, SW - 8, 10, 8);
           ctx.fill();
+
+          ctx.restore();
         }
 
         if (equipment.tripod) {
