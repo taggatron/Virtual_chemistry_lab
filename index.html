@@ -770,7 +770,7 @@
           }
         }
 
-        const showBeaker = activePractical !== 'conservation-of-mass';
+        const showBeaker = activePractical !== 'conservation-of-mass' && activePractical !== 'gas-test-limewater';
 
         if (showBeaker && s.temp >= 100 && s.volume > 0) {
           s.volume -= 0.1;
@@ -1780,93 +1780,144 @@
         }
 
         if (activePractical === 'gas-test-limewater') {
-          const fx = 380;
-          const fy = 424;
-          const lx = 468;
-          const ly = 446;
+          const fx = 196;
+          const fy = 410;
+          const lx = 354;
+          const ly = 420;
 
           ctx.save();
-          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+
+          // Bench shadows
+          ctx.fillStyle = 'rgba(0,0,0,0.24)';
           ctx.beginPath();
-          ctx.ellipse(fx, fy + 86, 34, 9, 0, 0, Math.PI * 2);
+          ctx.ellipse(fx + 4, fy + 104, 56, 13, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(lx, ly + 112, 36, 11, 0, 0, Math.PI * 2);
           ctx.fill();
 
-          const flaskGrad = ctx.createLinearGradient(fx - 30, fy - 70, fx + 30, fy + 60);
-          flaskGrad.addColorStop(0, 'rgba(255,255,255,0.14)');
-          flaskGrad.addColorStop(1, 'rgba(148,163,184,0.16)');
-          ctx.fillStyle = flaskGrad;
-          ctx.strokeStyle = 'rgba(226,232,240,0.85)';
-          ctx.lineWidth = 2;
+          // Conical flask body
+          const flaskBody = ctx.createLinearGradient(fx - 48, fy - 92, fx + 52, fy + 72);
+          flaskBody.addColorStop(0, 'rgba(255,255,255,0.20)');
+          flaskBody.addColorStop(0.35, 'rgba(226,232,240,0.10)');
+          flaskBody.addColorStop(1, 'rgba(100,116,139,0.16)');
+          ctx.fillStyle = flaskBody;
+          ctx.strokeStyle = 'rgba(226,232,240,0.88)';
+          ctx.lineWidth = 2.4;
           ctx.beginPath();
-          ctx.moveTo(fx - 10, fy - 66);
-          ctx.lineTo(fx - 10, fy - 30);
-          ctx.quadraticCurveTo(fx - 30, fy + 20, fx - 24, fy + 74);
-          ctx.lineTo(fx + 24, fy + 74);
-          ctx.quadraticCurveTo(fx + 30, fy + 20, fx + 10, fy - 30);
-          ctx.lineTo(fx + 10, fy - 66);
+          ctx.moveTo(fx - 14, fy - 88);
+          ctx.lineTo(fx - 14, fy - 44);
+          ctx.quadraticCurveTo(fx - 54, fy + 26, fx - 38, fy + 94);
+          ctx.lineTo(fx + 38, fy + 94);
+          ctx.quadraticCurveTo(fx + 54, fy + 26, fx + 14, fy - 44);
+          ctx.lineTo(fx + 14, fy - 88);
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
 
-          const flaskLiquid = ctx.createLinearGradient(fx, fy + 22, fx, fy + 72);
-          flaskLiquid.addColorStop(0, 'rgba(147,197,253,0.45)');
-          flaskLiquid.addColorStop(1, 'rgba(59,130,246,0.66)');
+          // Neck rim and stopper
+          ctx.fillStyle = 'rgba(51,65,85,0.92)';
+          ctx.beginPath();
+          ctx.roundRect(fx - 15, fy - 96, 30, 10, 3);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(17,24,39,0.95)';
+          ctx.fillRect(fx - 6, fy - 86, 12, 14);
+
+          // Flask liquid with depth
+          const flaskLiquid = ctx.createLinearGradient(fx, fy + 8, fx, fy + 94);
+          flaskLiquid.addColorStop(0, 'rgba(59,130,246,0.48)');
+          flaskLiquid.addColorStop(0.55, 'rgba(37,99,235,0.56)');
+          flaskLiquid.addColorStop(1, 'rgba(29,78,216,0.74)');
           ctx.fillStyle = flaskLiquid;
           ctx.beginPath();
-          ctx.moveTo(fx - 22, fy + 24);
-          ctx.quadraticCurveTo(fx, fy + 16, fx + 22, fy + 24);
-          ctx.lineTo(fx + 20, fy + 70);
-          ctx.lineTo(fx - 20, fy + 70);
+          ctx.moveTo(fx - 36, fy + 14);
+          ctx.quadraticCurveTo(fx, fy + 4, fx + 36, fy + 14);
+          ctx.lineTo(fx + 32, fy + 90);
+          ctx.lineTo(fx - 32, fy + 90);
           ctx.closePath();
           ctx.fill();
 
-          ctx.fillStyle = 'rgba(100,116,139,0.92)';
-          ctx.fillRect(fx - 11, fy - 72, 22, 8);
-
-          ctx.strokeStyle = 'rgba(203,213,225,0.9)';
-          ctx.lineWidth = 3;
+          // Liquid meniscus highlight
+          ctx.strokeStyle = 'rgba(191,219,254,0.72)';
+          ctx.lineWidth = 1.4;
           ctx.beginPath();
-          ctx.moveTo(fx + 8, fy - 68);
-          ctx.bezierCurveTo(fx + 34, fy - 104, lx - 12, ly - 86, lx - 8, ly - 10);
+          ctx.ellipse(fx, fy + 14, 36, 5, 0, 0, Math.PI * 2);
           ctx.stroke();
 
-          ctx.fillStyle = 'rgba(0,0,0,0.20)';
+          // Glass highlights
+          const flaskHi = ctx.createLinearGradient(fx - 38, fy - 82, fx - 10, fy + 72);
+          flaskHi.addColorStop(0, 'rgba(255,255,255,0.34)');
+          flaskHi.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = flaskHi;
           ctx.beginPath();
-          ctx.ellipse(lx, ly + 88, 22, 7, 0, 0, Math.PI * 2);
+          ctx.roundRect(fx - 36, fy - 72, 14, 142, 8);
           ctx.fill();
 
-          ctx.fillStyle = 'rgba(255,255,255,0.14)';
-          ctx.strokeStyle = 'rgba(226,232,240,0.85)';
-          ctx.lineWidth = 2;
+          // Delivery tube with depth
+          ctx.save();
+          ctx.strokeStyle = 'rgba(226,232,240,0.90)';
+          ctx.lineWidth = 7;
+          ctx.lineCap = 'round';
           ctx.beginPath();
-          ctx.roundRect(lx - 14, ly - 44, 28, 124, 14);
+          ctx.moveTo(fx + 2, fy - 88);
+          ctx.bezierCurveTo(fx + 72, fy - 146, lx - 20, ly - 142, lx - 10, ly - 26);
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(148,163,184,0.65)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(fx + 2, fy - 88);
+          ctx.bezierCurveTo(fx + 72, fy - 146, lx - 20, ly - 142, lx - 10, ly - 26);
+          ctx.stroke();
+          ctx.restore();
+
+          // Limewater receiver test tube
+          const tubeGlass = ctx.createLinearGradient(lx - 20, ly - 62, lx + 20, ly + 94);
+          tubeGlass.addColorStop(0, 'rgba(255,255,255,0.22)');
+          tubeGlass.addColorStop(0.55, 'rgba(203,213,225,0.12)');
+          tubeGlass.addColorStop(1, 'rgba(100,116,139,0.16)');
+          ctx.fillStyle = tubeGlass;
+          ctx.strokeStyle = 'rgba(226,232,240,0.88)';
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.roundRect(lx - 20, ly - 62, 40, 154, 18);
           ctx.fill();
           ctx.stroke();
 
           const milky = simState.current.limewaterCloudy;
-          const limeGrad = ctx.createLinearGradient(lx, ly + 26, lx, ly + 74);
-          limeGrad.addColorStop(0, milky ? 'rgba(244,244,245,0.85)' : 'rgba(241,245,249,0.34)');
-          limeGrad.addColorStop(1, milky ? 'rgba(226,232,240,0.93)' : 'rgba(226,232,240,0.52)');
+          const limeGrad = ctx.createLinearGradient(lx, ly + 8, lx, ly + 78);
+          limeGrad.addColorStop(0, milky ? 'rgba(250,250,250,0.90)' : 'rgba(241,245,249,0.42)');
+          limeGrad.addColorStop(1, milky ? 'rgba(226,232,240,0.96)' : 'rgba(226,232,240,0.60)');
           ctx.fillStyle = limeGrad;
           ctx.beginPath();
-          ctx.roundRect(lx - 10, ly + 26, 20, 46, 4);
+          ctx.roundRect(lx - 15, ly + 8, 30, 70, 6);
           ctx.fill();
 
+          // Bubbles entering limewater
           if (simState.current.carbonDioxideGas > 0) {
-            ctx.fillStyle = 'rgba(226,232,240,0.65)';
-            for (let i = 0; i < 4; i += 1) {
-              const bx = lx - 3 + i * 2;
-              const by = ly + 52 - i * 8;
+            for (let i = 0; i < 6; i += 1) {
+              const t = i / 6;
+              const bx = lx - 5 + Math.sin((Date.now() / 300) + i) * 2;
+              const by = ly + 70 - t * 60;
+              ctx.fillStyle = 'rgba(226,232,240,0.72)';
               ctx.beginPath();
-              ctx.arc(bx, by, 2, 0, Math.PI * 2);
+              ctx.arc(bx, by, 1.8 + (i % 2) * 0.5, 0, Math.PI * 2);
               ctx.fill();
             }
           }
 
-          ctx.fillStyle = 'rgba(226,232,240,0.85)';
-          ctx.font = '10px monospace';
-          ctx.fillText('acid + carbonate flask', fx - 47, fy + 96);
-          ctx.fillText('limewater receiver', lx - 42, ly + 94);
+          // Receiving tube highlight
+          const tubeHi = ctx.createLinearGradient(lx - 18, ly - 52, lx - 6, ly + 88);
+          tubeHi.addColorStop(0, 'rgba(255,255,255,0.34)');
+          tubeHi.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = tubeHi;
+          ctx.beginPath();
+          ctx.roundRect(lx - 17, ly - 50, 9, 132, 6);
+          ctx.fill();
+
+          ctx.fillStyle = 'rgba(226,232,240,0.90)';
+          ctx.font = '11px monospace';
+          ctx.fillText('acid + carbonate flask', fx - 68, fy + 122);
+          ctx.fillText('limewater test tube', lx - 58, ly + 130);
           ctx.restore();
         }
 
