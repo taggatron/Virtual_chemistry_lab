@@ -1,0 +1,2037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Chemistry Lab</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes doseSlideUp {
+      from {
+        transform: translateY(24px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes streamPulse {
+      0%, 100% { opacity: 0.45; transform: scaleY(0.85); }
+      50% { opacity: 1; transform: scaleY(1.15); }
+    }
+
+    .dose-slide-up {
+      animation: doseSlideUp 220ms ease-out;
+    }
+
+    .stream-pulse {
+      animation: streamPulse 900ms ease-in-out infinite;
+      transform-origin: center top;
+    }
+  </style>
+</head>
+<body class="bg-slate-950">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const makeIcon = (symbol) => ({ className = '' }) => <span className={className}>{symbol}</span>;
+    const Flame = makeIcon('🔥');
+    const Snowflake = makeIcon('❄️');
+    const Trash2 = makeIcon('🗑️');
+    const Droplets = makeIcon('💧');
+    const Zap = makeIcon('⚡');
+    const Thermometer = makeIcon('🌡️');
+    const FlaskConical = makeIcon('⚗️');
+    const Info = makeIcon('ℹ️');
+    const X = makeIcon('✖');
+    const GripVertical = makeIcon('⋮');
+    const Syringe = makeIcon('💉');
+    const Gauge = makeIcon('📏');
+    const LAB_GUIDE_STORAGE_KEY = 'chemLabGuideDismissed';
+
+    const CHEMICALS = [
+      { id: 'water', name: 'Water (H₂O)', type: 'liquid', color: [200, 230, 255, 0.3], ph: 7.0, desc: 'Neutral solvent', icon: '💧' },
+      { id: 'hcl', name: 'Hydrochloric Acid (HCl)', type: 'liquid', color: [255, 255, 255, 0.1], ph: 1.0, desc: 'Strong acid', icon: '🧪' },
+      { id: 'naoh', name: 'Sodium Hydroxide (NaOH)', type: 'liquid', color: [255, 255, 255, 0.15], ph: 14.0, desc: 'Strong base', icon: '🧼' },
+      { id: 'mg', name: 'Magnesium (Mg)', type: 'solid', color: [180, 180, 180, 1], ph: null, desc: 'Reactive metal', icon: '🔩' },
+      { id: 'cuso4', name: 'Copper Sulfate (CuSO₄)', type: 'solid_powder', color: [30, 144, 255, 1], ph: 6.0, desc: 'Blue crystals', icon: '🔷' },
+      { id: 'nh4no3', name: 'Ammonium Nitrate (NH₄NO₃)', type: 'solid_powder', color: [240, 240, 240, 1], ph: 7.0, desc: 'Endothermic in water', icon: '🧂' },
+      { id: 'indicator', name: 'Universal Indicator', type: 'liquid', color: [50, 200, 50, 0.9], ph: 7.0, special: 'indicator', desc: 'pH color tracker', icon: '🌈' },
+      { id: 'sodium', name: 'Sodium (Na)', type: 'solid', color: [200, 200, 200, 1], ph: null, desc: 'Very reactive metal', icon: '⚡' },
+      { id: 'kmno4', name: 'Potassium Permanganate', type: 'liquid', color: [128, 0, 128, 0.8], ph: 7.0, desc: 'Purple oxidant', icon: '🟣' },
+      { id: 'gold', name: 'Gold Particle', type: 'solid', color: [255, 215, 0, 1], ph: 7.0, desc: 'Inert metal', icon: '🪙' }
+    ];
+
+    const mixColors = (baseColor, addedColor, baseVol, addedVol) => {
+      if (baseVol <= 0) return [...addedColor];
+      const totalVol = baseVol + addedVol;
+      const w1 = baseVol / totalVol;
+      const w2 = addedVol / totalVol;
+
+      return [
+        baseColor[0] * w1 + addedColor[0] * w2,
+        baseColor[1] * w1 + addedColor[1] * w2,
+        baseColor[2] * w1 + addedColor[2] * w2,
+        Math.min(0.95, baseColor[3] * w1 + addedColor[3] * w2 + 0.05)
+      ];
+    };
+
+    function ChemistryLab() {
+      const [uiState, setUiState] = useState({
+        temp: 20,
+        volume: 0,
+        ph: 7.0,
+        gasVolume: 0,
+        activeReaction: null
+      });
+      const [activeTab, setActiveTab] = useState('chemicals');
+      const [equipment, setEquipment] = useState({
+        syringe: false,
+        thermometer: true,
+        bunsen: false,
+        bunsenLit: false,
+        crucible: false,
+        tripod: false,
+        gauze: false,
+        scales: false
+      });
+      const [doseEditor, setDoseEditor] = useState(null);
+      const [isBeakerTargeted, setIsBeakerTargeted] = useState(false);
+      const [view, setView] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
+      const [helpOpenNonce, setHelpOpenNonce] = useState(0);
+      const [activePractical, setActivePractical] = useState(null);
+
+      const simState = useRef({
+        volume: 0,
+        temp: 20,
+        tempEffect: 0,
+        ph: 7.0,
+        gasVolume: 0,
+        contents: {},
+        color: [200, 230, 255, 0],
+        particles: [],
+        indicatorPresent: false,
+        boiling: false,
+        crucibleTemp: 20,
+        crucibleMgMass: 0,
+        crucibleResidueMass: 0,
+        scaleSampleName: null,
+        scaleSampleMass: 0,
+        crucibleOnSupport: false,
+        crucibleX: 246,
+        crucibleY: 534,
+        crucibleDragging: false,
+        crucibleDragOffsetX: 0,
+        crucibleDragOffsetY: 0,
+        magnesiumBurning: false,
+        combustionComplete: false
+      });
+
+      const canvasRef = useRef(null);
+      const requestRef = useRef();
+
+      const applyThermalChange = (delta, persistence = 0.015) => {
+        const s = simState.current;
+        s.temp += delta;
+        const direction = delta >= 0 ? 1 : -1;
+        s.tempEffect += direction * Math.min(0.06, Math.max(0.004, Math.abs(delta) * persistence));
+      };
+
+      const triggerReaction = (type, intensity = 1, label = null) => {
+        const s = simState.current;
+
+        if (equipment.syringe) {
+          const gasProduced = type === 'explosion' ? 20 * intensity : type === 'gas' ? 10 * intensity : 0.5 * intensity;
+          s.gasVolume = Math.min(100, s.gasVolume + gasProduced);
+        }
+
+        if (label) {
+          setUiState((prev) => ({ ...prev, activeReaction: label }));
+        } else if (type === 'explosion') {
+          setUiState((prev) => ({ ...prev, activeReaction: 'Explosion!' }));
+        }
+
+        if (type === 'explosion') {
+          for (let i = 0; i < 40 * intensity; i++) {
+            s.particles.push({
+              type: 'fire',
+              x: 220 + (Math.random() - 0.5) * 110,
+              y: 350 - s.volume * 0.6,
+              vx: (Math.random() - 0.5) * 5,
+              vy: -2 - Math.random() * 5,
+              life: 1.0,
+              size: 5 + Math.random() * 15,
+              color: Math.random() > 0.5 ? '#ef4444' : '#f97316'
+            });
+          }
+          applyThermalChange(50 * intensity, 0.02);
+        } else if (type === 'steam' || type === 'gas') {
+          if (type === 'steam') applyThermalChange(1.2 * intensity, 0.008);
+          if (type === 'gas') applyThermalChange(0.8 * intensity, 0.007);
+          if (!equipment.syringe || s.gasVolume >= 100) {
+            s.particles.push({
+              type: 'steam',
+              x: 220 + (Math.random() - 0.5) * 180,
+              y: 350 - s.volume * 0.6,
+              vx: (Math.random() - 0.5) * 2,
+              vy: -2 - Math.random() * 2,
+              life: 1.0,
+              size: 20 + Math.random() * 30,
+              rotation: Math.random() * Math.PI
+            });
+          }
+        }
+
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 2000);
+      };
+
+      const calculatePH = (contents, volume) => {
+        if (volume === 0) return 7.0;
+        const acidUnits = (contents.hcl || 0) * 10;
+        const baseUnits = (contents.naoh || 0) * 10;
+        const net = baseUnits - acidUnits;
+        const concentration = net / (volume / 50);
+        if (concentration === 0) return 7.0;
+        const deviation = Math.min(7, Math.max(-6, concentration));
+        return 7.0 + deviation;
+      };
+
+      const getDoseConfig = (chem) => {
+        if (chem.type === 'liquid') {
+          return { label: 'Volume', unit: 'mL', min: 10, max: 120, step: 10, defaultValue: 50 };
+        }
+        return { label: 'Mass', unit: 'g', min: 0.2, max: 5, step: 0.2, defaultValue: 1 };
+      };
+
+      const addChemical = (chemId, customDose = null) => {
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem) return;
+
+        const s = simState.current;
+        const dose = customDose ?? (chem.type === 'liquid' ? 50 : 1);
+        s.contents[chem.id] = (s.contents[chem.id] || 0) + dose;
+
+        if (chem.type === 'liquid') {
+          s.color = mixColors(s.color, chem.color, s.volume, dose);
+          s.volume = Math.min(s.volume + dose, 400);
+        } else {
+          const particleCount = Math.max(1, Math.min(18, Math.round(dose * 4)));
+          for (let i = 0; i < particleCount; i += 1) {
+            s.particles.push({
+              type: 'solid',
+              x: 220 + (Math.random() - 0.5) * 60,
+              y: 100 - Math.random() * 20,
+              vx: (Math.random() - 0.5) * 0.4,
+              vy: 2 + Math.random() * 2,
+              life: 1.0,
+              size: 5 + Math.random() * 4,
+              color: `rgba(${chem.color.join(',')})`,
+              chemId: chem.id
+            });
+          }
+        }
+
+        if (chem.special === 'indicator') s.indicatorPresent = true;
+
+        if (chem.id === 'sodium' && (s.contents.water > 0 || s.volume > 10)) {
+          triggerReaction('explosion', 2);
+          s.contents.sodium = 0;
+          s.contents.naoh = (s.contents.naoh || 0) + 1;
+        } else if (chem.id === 'water' && s.contents.sodium > 0) {
+          triggerReaction('explosion', s.contents.sodium);
+          s.contents.sodium = 0;
+        }
+
+        if ((chem.id === 'hcl' && s.contents.naoh > 0) || (chem.id === 'naoh' && s.contents.hcl > 0)) {
+          const neutralized = Math.min(s.contents.hcl || 0, s.contents.naoh || 0);
+          s.contents.hcl = Math.max(0, (s.contents.hcl || 0) - neutralized);
+          s.contents.naoh = Math.max(0, (s.contents.naoh || 0) - neutralized);
+          applyThermalChange(10, 0.016);
+          triggerReaction('steam', 1, 'Neutralization: HCl + NaOH');
+        }
+
+        if ((chem.id === 'mg' && s.contents.hcl > 0) || (chem.id === 'hcl' && s.contents.mg > 0)) {
+          const reactedMg = Math.min(2.5, s.contents.mg || 0);
+          applyThermalChange(6 + reactedMg * 2, 0.018);
+          s.contents.mg = Math.max(0, (s.contents.mg || 0) - reactedMg);
+          s.contents.hcl = Math.max(0, (s.contents.hcl || 0) - 22 * reactedMg);
+          triggerReaction('gas', Math.max(1, reactedMg), 'Mg + HCl → H₂ gas');
+        }
+
+        if ((chem.id === 'cuso4' && s.contents.water > 0) || (chem.id === 'water' && s.contents.cuso4 > 0)) {
+          s.color = mixColors(s.color, [30, 144, 255, 0.6], s.volume, 20);
+          triggerReaction('steam', 0.1, 'CuSO₄ dissolves in water');
+        }
+
+        if ((chem.id === 'nh4no3' && s.contents.water > 0) || (chem.id === 'water' && s.contents.nh4no3 > 0)) {
+          const cooling = Math.min(16, 4 + (s.contents.nh4no3 || 1) * 1.8);
+          applyThermalChange(-cooling, 0.022);
+          triggerReaction('steam', 0.1, 'NH₄NO₃ + H₂O (endothermic)');
+        }
+
+        s.ph = calculatePH(s.contents, s.volume);
+
+        setUiState((prev) => ({
+          ...prev,
+          volume: Math.round(s.volume),
+          ph: s.ph,
+          temp: Math.round(s.temp)
+        }));
+      };
+
+      const clearBeaker = () => {
+        simState.current = {
+          volume: 0,
+          temp: 20,
+          tempEffect: 0,
+          ph: 7.0,
+          gasVolume: 0,
+          contents: {},
+          color: [200, 230, 255, 0],
+          particles: [],
+          indicatorPresent: false,
+          boiling: false,
+          crucibleTemp: 20,
+          crucibleMgMass: 0,
+          crucibleResidueMass: 0,
+          scaleSampleName: null,
+          scaleSampleMass: 0,
+          crucibleOnSupport: false,
+          crucibleX: 246,
+          crucibleY: 534,
+          crucibleDragging: false,
+          crucibleDragOffsetX: 0,
+          crucibleDragOffsetY: 0,
+          magnesiumBurning: false,
+          combustionComplete: false
+        };
+        setUiState({ temp: 20, volume: 0, ph: 7.0, gasVolume: 0, activeReaction: null });
+      };
+
+      const handleDragStart = (event, chemId) => {
+        event.dataTransfer.setData('dragKind', 'chemical');
+        event.dataTransfer.setData('chemId', chemId);
+        event.dataTransfer.effectAllowed = 'copy';
+      };
+
+      const handleLabItemDragStart = (event, itemId) => {
+        event.dataTransfer.setData('dragKind', 'labItem');
+        event.dataTransfer.setData('labItem', itemId);
+        event.dataTransfer.effectAllowed = 'move';
+      };
+
+      const openDoseEditor = (chemId) => {
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem) return;
+        const cfg = getDoseConfig(chem);
+        setDoseEditor({ chemId, amount: cfg.defaultValue });
+      };
+
+      const handleDragOver = (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setIsBeakerTargeted(true);
+      };
+
+      const handleDrop = (event) => {
+        event.preventDefault();
+        const dragKind = event.dataTransfer.getData('dragKind');
+
+        if (dragKind === 'labItem') {
+          const labItem = event.dataTransfer.getData('labItem');
+          if (labItem === 'crucible_with_mg' && activePractical === 'conservation-of-mass') {
+            const canvas = canvasRef.current;
+            if (canvas) {
+              const rect = canvas.getBoundingClientRect();
+              const canvasX = ((event.clientX - rect.left) * canvas.width) / rect.width;
+              const canvasY = ((event.clientY - rect.top) * canvas.height) / rect.height;
+              const isOnGauze = canvasX > 380 && canvasX < 480 && canvasY > 390 && canvasY < 455;
+
+              if (isOnGauze) {
+                simState.current.crucibleOnSupport = true;
+                simState.current.crucibleX = 430;
+                simState.current.crucibleY = 390;
+                setUiState((prev) => ({ ...prev, activeReaction: 'Crucible placed on gauze/tripod' }));
+              } else {
+                setUiState((prev) => ({ ...prev, activeReaction: 'Drop on top of gauze/tripod' }));
+              }
+              setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+            }
+          }
+          setIsBeakerTargeted(false);
+          return;
+        }
+
+        const chemId = event.dataTransfer.getData('chemId');
+        if (chemId) openDoseEditor(chemId);
+        setIsBeakerTargeted(false);
+      };
+
+      const handleDragEnter = (event) => {
+        event.preventDefault();
+        setIsBeakerTargeted(true);
+      };
+
+      const handleDragLeave = () => {
+        setIsBeakerTargeted(false);
+      };
+
+      const getCanvasCoords = (event) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: ((event.clientX - rect.left) * canvas.width) / rect.width,
+          y: ((event.clientY - rect.top) * canvas.height) / rect.height
+        };
+      };
+
+      const handleCanvasMouseDown = (event) => {
+        if (!equipment.crucible) return;
+        const point = getCanvasCoords(event);
+        if (!point) return;
+        const s = simState.current;
+        const cx = s.crucibleX;
+        const cy = s.crucibleY;
+        const dx = point.x - cx;
+        const dy = point.y - cy;
+        const isInsideCrucible = (dx * dx) / (34 * 34) + (dy * dy) / (20 * 20) <= 1;
+        if (!isInsideCrucible) return;
+
+        s.crucibleDragging = true;
+        s.crucibleDragOffsetX = dx;
+        s.crucibleDragOffsetY = dy;
+      };
+
+      const handleCanvasMouseMove = (event) => {
+        const s = simState.current;
+        if (!s.crucibleDragging) return;
+        const point = getCanvasCoords(event);
+        if (!point) return;
+
+        s.crucibleX = Math.max(60, Math.min(470, point.x - s.crucibleDragOffsetX));
+        s.crucibleY = Math.max(140, Math.min(605, point.y - s.crucibleDragOffsetY));
+      };
+
+      const handleCanvasMouseUp = () => {
+        const s = simState.current;
+        if (!s.crucibleDragging) return;
+        s.crucibleDragging = false;
+
+        if (activePractical === 'conservation-of-mass') {
+          const isOnGauze = s.crucibleX > 380 && s.crucibleX < 480 && s.crucibleY > 360 && s.crucibleY < 430;
+          if (isOnGauze) {
+            s.crucibleOnSupport = true;
+            s.crucibleX = 430;
+            s.crucibleY = 390;
+          } else {
+            s.crucibleOnSupport = false;
+          }
+        }
+      };
+
+      const confirmDose = () => {
+        if (!doseEditor) return;
+        addChemical(doseEditor.chemId, Number(doseEditor.amount));
+        setDoseEditor(null);
+      };
+
+      const cancelDose = () => {
+        setDoseEditor(null);
+      };
+
+      const setZoom = (nextZoom) => {
+        setView((prev) => ({ ...prev, zoom: Math.max(0.7, Math.min(2, nextZoom)) }));
+      };
+
+      const nudgePan = (dx, dy) => {
+        setView((prev) => ({
+          ...prev,
+          offsetX: Math.max(-220, Math.min(220, prev.offsetX + dx)),
+          offsetY: Math.max(-220, Math.min(220, prev.offsetY + dy))
+        }));
+      };
+
+      const resetView = () => {
+        setView({ zoom: 1, offsetX: 0, offsetY: 0 });
+      };
+
+      const weighSample = (chemId, mass) => {
+        const s = simState.current;
+        const chem = CHEMICALS.find((item) => item.id === chemId);
+        if (!chem || !equipment.scales) return;
+        s.scaleSampleName = chem.name;
+        s.scaleSampleMass = Number(mass.toFixed(2));
+        setUiState((prev) => ({ ...prev, activeReaction: `${chem.name} weighed: ${s.scaleSampleMass.toFixed(2)} g` }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+      };
+
+      const transferScaleToCrucible = () => {
+        const s = simState.current;
+        if (!equipment.crucible || s.scaleSampleMass <= 0) return;
+        if (!s.scaleSampleName.toLowerCase().includes('magnesium')) return;
+        s.crucibleMgMass += s.scaleSampleMass;
+        s.scaleSampleMass = 0;
+        s.scaleSampleName = null;
+        s.crucibleOnSupport = false;
+        s.crucibleX = 246;
+        s.crucibleY = 534;
+        s.crucibleX = 246;
+        s.crucibleY = 534;
+        s.combustionComplete = false;
+        setUiState((prev) => ({ ...prev, activeReaction: `Mg loaded to crucible (${s.crucibleMgMass.toFixed(2)} g)` }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+      };
+
+      const loadConservationPractical = () => {
+        const s = simState.current;
+        s.volume = 0;
+        s.contents = {};
+        s.color = [200, 230, 255, 0];
+        s.indicatorPresent = false;
+        s.ph = 7;
+
+        setEquipment((prev) => ({
+          ...prev,
+          bunsen: true,
+          bunsenLit: false,
+          crucible: true,
+          tripod: true,
+          gauze: true,
+          scales: true
+        }));
+        setActivePractical('conservation-of-mass');
+        resetView();
+        setActiveTab('practicals');
+        setUiState((prev) => ({ ...prev, activeReaction: 'Conservation of mass setup loaded' }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+      };
+
+      const draw = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const s = simState.current;
+
+        s.temp += s.tempEffect;
+        s.tempEffect *= 0.992;
+        if (Math.abs(s.tempEffect) < 0.0005) s.tempEffect = 0;
+
+        if (s.temp > 20) s.temp -= 0.008;
+        if (s.temp < 20) s.temp += 0.008;
+        s.temp = Math.max(-10, Math.min(220, s.temp));
+
+        if (equipment.bunsen && equipment.bunsenLit && s.volume > 0) {
+          s.temp = Math.min(220, s.temp + 0.018);
+        }
+
+        if (equipment.crucible) {
+          if (equipment.bunsen && equipment.bunsenLit && s.crucibleOnSupport) s.crucibleTemp = Math.min(900, s.crucibleTemp + 1.6);
+          else s.crucibleTemp = Math.max(20, s.crucibleTemp - 0.9);
+
+          if (!s.magnesiumBurning && s.crucibleMgMass > 0 && s.crucibleTemp > 520) {
+            s.magnesiumBurning = true;
+            s.combustionComplete = false;
+            setUiState((prev) => ({ ...prev, activeReaction: 'Magnesium combustion started' }));
+            setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+          }
+
+          if (s.magnesiumBurning) {
+            const burnRate = Math.min(s.crucibleMgMass, 0.0045);
+            s.crucibleMgMass -= burnRate;
+            s.crucibleResidueMass += burnRate * 1.66;
+
+            for (let i = 0; i < 4; i += 1) {
+              s.particles.push({
+                type: 'mgSpark',
+                x: 430 + (Math.random() - 0.5) * 18,
+                y: 390 + (Math.random() - 0.5) * 8,
+                vx: (Math.random() - 0.5) * 1.6,
+                vy: -1.4 - Math.random() * 1.8,
+                life: 0.9,
+                size: 1.6 + Math.random() * 2.2,
+                color: Math.random() > 0.5 ? '#ffffff' : '#fff59e'
+              });
+            }
+
+            if (s.crucibleMgMass <= 0.001) {
+              s.crucibleMgMass = 0;
+              s.magnesiumBurning = false;
+              if (!s.combustionComplete) {
+                s.combustionComplete = true;
+                setUiState((prev) => ({ ...prev, activeReaction: 'Mg combustion complete (MgO formed)' }));
+                setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+              }
+            }
+          }
+        }
+
+        const showBeaker = activePractical !== 'conservation-of-mass';
+
+        if (showBeaker && s.temp >= 100 && s.volume > 0) {
+          s.volume -= 0.1;
+          s.boiling = true;
+          if (Math.random() > 0.8) {
+            s.particles.push({
+              type: 'bubble',
+              x: 170 + Math.random() * 140,
+              y: 500,
+              vx: Math.random() - 0.5,
+              vy: -2 - Math.random(),
+              life: 1.0,
+              size: 2 + Math.random() * 4,
+              color: 'rgba(255,255,255,0.4)'
+            });
+          }
+          if (Math.random() > 0.9) triggerReaction('steam');
+        } else if (showBeaker) {
+          s.boiling = false;
+        }
+
+        s.particles.forEach((particle) => {
+          particle.x += particle.vx;
+          particle.y += particle.vy;
+          particle.life -= 0.01;
+          if (particle.type === 'solid') {
+            const bottomY = 520;
+            if (particle.y > bottomY) {
+              particle.y = bottomY;
+              particle.vy = 0;
+              particle.life += 0.009;
+            }
+          }
+        });
+        s.particles = s.particles.filter((particle) => particle.life > 0);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const BX = 80;
+        const BY = 100;
+        const BW = 280;
+        const BH = 420;
+        const RIM_H = 18;
+        const bottomCurve = 18;
+
+        const buildOuterBeakerPath = () => {
+          ctx.beginPath();
+          ctx.moveTo(BX, BY + 2);
+          ctx.lineTo(BX, BY + BH - bottomCurve);
+          ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve, BX + BW, BY + BH - bottomCurve);
+          ctx.lineTo(BX + BW, BY + 2);
+          ctx.closePath();
+        };
+
+        const buildInnerBeakerPath = () => {
+          ctx.beginPath();
+          ctx.moveTo(BX + 8, BY + 8);
+          ctx.lineTo(BX + 8, BY + BH - bottomCurve - 2);
+          ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve - 4, BX + BW - 8, BY + BH - bottomCurve - 2);
+          ctx.lineTo(BX + BW - 8, BY + 8);
+          ctx.closePath();
+        };
+
+        if (showBeaker) {
+
+        ctx.save();
+        ctx.shadowColor = isBeakerTargeted ? 'rgba(56, 189, 248, 0.55)' : 'rgba(15, 23, 42, 0.45)';
+        ctx.shadowBlur = isBeakerTargeted ? 24 : 12;
+        buildOuterBeakerPath();
+        ctx.clip();
+
+        const bodyGradient = ctx.createLinearGradient(BX, BY, BX + BW, BY + BH);
+        bodyGradient.addColorStop(0, 'rgba(255,255,255,0.08)');
+        bodyGradient.addColorStop(0.45, 'rgba(255,255,255,0.02)');
+        bodyGradient.addColorStop(1, 'rgba(148,163,184,0.1)');
+        ctx.fillStyle = bodyGradient;
+        ctx.fillRect(BX, BY, BW, BH + bottomCurve + 8);
+
+        const leftHighlight = ctx.createLinearGradient(BX, BY, BX + 28, BY);
+        leftHighlight.addColorStop(0, 'rgba(255,255,255,0.38)');
+        leftHighlight.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = leftHighlight;
+        ctx.fillRect(BX + 2, BY + 8, 26, BH + bottomCurve);
+
+        const rightShade = ctx.createLinearGradient(BX + BW - 18, BY, BX + BW, BY);
+        rightShade.addColorStop(0, 'rgba(15,23,42,0)');
+        rightShade.addColorStop(1, 'rgba(15,23,42,0.34)');
+        ctx.fillStyle = rightShade;
+        ctx.fillRect(BX + BW - 18, BY + 8, 16, BH + bottomCurve);
+        ctx.restore();
+
+        const rimGloss = ctx.createLinearGradient(BX + 10, BY, BX + BW - 10, BY);
+        rimGloss.addColorStop(0, 'rgba(255,255,255,0.12)');
+        rimGloss.addColorStop(0.5, 'rgba(255,255,255,0.03)');
+        rimGloss.addColorStop(1, 'rgba(255,255,255,0.1)');
+        ctx.fillStyle = rimGloss;
+        ctx.fillRect(BX + 10, BY + 2, BW - 20, 6);
+
+        ctx.save();
+        buildOuterBeakerPath();
+        ctx.clip();
+        const baseShade = ctx.createLinearGradient(BX + 10, BY + BH - 16, BX + 10, BY + BH + 8);
+        baseShade.addColorStop(0, 'rgba(15,23,42,0.02)');
+        baseShade.addColorStop(1, 'rgba(255,255,255,0.12)');
+        ctx.fillStyle = baseShade;
+        ctx.fillRect(BX + 10, BY + BH - 16, BW - 20, 30);
+        ctx.restore();
+
+        if (equipment.syringe) {
+          const SYRINGE_X = 392;
+          const SYRINGE_Y = 200;
+          const MAX_PLUNGE = 100;
+          const plungeHeight = (s.gasVolume / 100) * MAX_PLUNGE;
+
+          ctx.beginPath();
+          ctx.moveTo(BX + BW - 10, BY + 20);
+          ctx.bezierCurveTo(BX + BW + 30, BY + 20, SYRINGE_X - 20, SYRINGE_Y + 150, SYRINGE_X, SYRINGE_Y + 150);
+          ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)';
+          ctx.lineWidth = 6;
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+          ctx.lineWidth = 2;
+          ctx.fillRect(SYRINGE_X, SYRINGE_Y, 40, 160);
+          ctx.strokeRect(SYRINGE_X, SYRINGE_Y, 40, 160);
+
+          ctx.fillStyle = 'rgba(255,255,255,0.5)';
+          ctx.font = '10px monospace';
+          for (let i = 0; i <= 4; i += 1) {
+            const markY = SYRINGE_Y + 160 - i * 40;
+            ctx.fillRect(SYRINGE_X, markY, 10, 1);
+            ctx.fillText(`${i * 25}`, SYRINGE_X + 15, markY + 3);
+          }
+
+          const plungerY = SYRINGE_Y + 160 - plungeHeight - 10;
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillRect(SYRINGE_X + 2, plungerY, 36, 10);
+          ctx.fillRect(SYRINGE_X + 18, SYRINGE_Y - 20, 4, plungerY - (SYRINGE_Y - 20));
+          ctx.fillRect(SYRINGE_X + 10, SYRINGE_Y - 20, 20, 4);
+        }
+
+        let displayColor = [...s.color];
+        if (s.indicatorPresent && s.volume > 0) {
+          if (s.ph < 6) displayColor = [255, 50, 50, 0.8];
+          else if (s.ph > 8) displayColor = [128, 0, 128, 0.8];
+          else displayColor = [50, 200, 50, 0.8];
+        }
+
+        const solidChemicals = CHEMICALS.filter((item) => item.type === 'solid' || item.type === 'solid_powder');
+        let totalSolidMass = 0;
+        let sedimentR = 0;
+        let sedimentG = 0;
+        let sedimentB = 0;
+
+        solidChemicals.forEach((chem) => {
+          const mass = s.contents[chem.id] || 0;
+          if (mass <= 0) return;
+          totalSolidMass += mass;
+          sedimentR += chem.color[0] * mass;
+          sedimentG += chem.color[1] * mass;
+          sedimentB += chem.color[2] * mass;
+        });
+
+        ctx.save();
+        buildInnerBeakerPath();
+        ctx.clip();
+
+        if (s.volume > 0) {
+          const fillHeight = (s.volume / 400) * (BH - 20);
+          const surfaceY = BY + BH - fillHeight;
+          const gradient = ctx.createLinearGradient(BX, surfaceY, BX, BY + BH);
+          gradient.addColorStop(0, `rgba(${displayColor[0]}, ${displayColor[1]}, ${displayColor[2]}, ${displayColor[3]})`);
+          gradient.addColorStop(1, `rgba(${displayColor[0] - 30}, ${displayColor[1] - 30}, ${displayColor[2] - 30}, ${displayColor[3] + 0.1})`);
+          ctx.fillStyle = gradient;
+          ctx.fillRect(BX + 8, surfaceY, BW - 16, fillHeight + 18);
+
+          const liquidGloss = ctx.createLinearGradient(BX + 8, surfaceY, BX + BW - 8, surfaceY);
+          liquidGloss.addColorStop(0, 'rgba(255,255,255,0.18)');
+          liquidGloss.addColorStop(0.4, 'rgba(255,255,255,0.04)');
+          liquidGloss.addColorStop(1, 'rgba(255,255,255,0.12)');
+          ctx.fillStyle = liquidGloss;
+          ctx.fillRect(BX + 8, surfaceY, BW - 16, 8);
+
+          ctx.beginPath();
+          ctx.ellipse(BX + BW / 2, surfaceY, BW / 2 - 10, 4, 0, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        if (totalSolidMass > 0) {
+          const sedimentHeight = Math.min(56, 5 + totalSolidMass * 4.5);
+          const sedimentY = BY + BH - sedimentHeight - 2;
+          const sedimentColor = [
+            Math.round(sedimentR / totalSolidMass),
+            Math.round(sedimentG / totalSolidMass),
+            Math.round(sedimentB / totalSolidMass)
+          ];
+
+          const sedimentGradient = ctx.createLinearGradient(BX, sedimentY, BX, BY + BH);
+          sedimentGradient.addColorStop(0, `rgba(${sedimentColor[0]}, ${sedimentColor[1]}, ${sedimentColor[2]}, 0.65)`);
+          sedimentGradient.addColorStop(1, `rgba(${Math.max(0, sedimentColor[0] - 30)}, ${Math.max(0, sedimentColor[1] - 30)}, ${Math.max(0, sedimentColor[2] - 30)}, 0.9)`);
+          ctx.fillStyle = sedimentGradient;
+          ctx.fillRect(BX + 10, sedimentY, BW - 20, sedimentHeight + 14);
+
+          ctx.beginPath();
+          ctx.ellipse(BX + BW / 2, sedimentY, BW / 2 - 12, Math.max(3, sedimentHeight * 0.15), 0, Math.PI, 0, true);
+          ctx.strokeStyle = `rgba(${Math.min(255, sedimentColor[0] + 30)}, ${Math.min(255, sedimentColor[1] + 30)}, ${Math.min(255, sedimentColor[2] + 30)}, 0.55)`;
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+
+        s.particles.forEach((particle) => {
+          ctx.save();
+          if (showBeaker && (particle.type === 'bubble' || particle.type === 'solid')) {
+            buildInnerBeakerPath();
+            ctx.clip();
+          }
+          ctx.globalAlpha = Math.max(0, particle.life);
+          ctx.translate(particle.x, particle.y);
+          if (particle.type === 'bubble') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            ctx.stroke();
+          } else if (particle.type === 'steam') {
+            ctx.rotate(particle.rotation);
+            ctx.fillStyle = 'rgba(200, 200, 200, 0.2)';
+            ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          } else if (particle.type === 'fire') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
+          } else if (particle.type === 'solid') {
+            ctx.fillStyle = particle.color;
+            ctx.fillRect(-particle.size / 2, -particle.size / 2, particle.size, particle.size);
+          } else if (particle.type === 'mgSpark') {
+            ctx.beginPath();
+            ctx.arc(0, 0, particle.size, 0, Math.PI * 2);
+            ctx.fillStyle = particle.color;
+            ctx.fill();
+          }
+          ctx.restore();
+        });
+
+        ctx.beginPath();
+        ctx.moveTo(BX, BY + 2);
+        ctx.lineTo(BX, BY + BH - bottomCurve);
+        ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve, BX + BW, BY + BH - bottomCurve);
+        ctx.lineTo(BX + BW, BY + 2);
+        ctx.strokeStyle = isBeakerTargeted ? 'rgba(125, 211, 252, 0.9)' : 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(BX + 9, BY + 10);
+        ctx.lineTo(BX + 9, BY + BH - bottomCurve - 2);
+        ctx.quadraticCurveTo(BX + BW / 2, BY + BH + bottomCurve - 4, BX + BW - 9, BY + BH - bottomCurve - 2);
+        ctx.lineTo(BX + BW - 9, BY + 10);
+        ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        const baseGlow = ctx.createRadialGradient(BX + BW / 2, BY + BH - 4, 8, BX + BW / 2, BY + BH - 4, BW / 2 - 14);
+        baseGlow.addColorStop(0, 'rgba(255,255,255,0.12)');
+        baseGlow.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = baseGlow;
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + BH - 2, BW / 2 - 12, 10, 0, Math.PI, 0, true);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + 1, BW / 2, RIM_H / 2, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = isBeakerTargeted ? 'rgba(186, 230, 253, 0.95)' : 'rgba(248,250,252,0.7)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.ellipse(BX + BW / 2, BY + 4, BW / 2 - 10, RIM_H / 2 - 2, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '12px monospace';
+        for (let i = 1; i <= 4; i += 1) {
+          const y = BY + BH - i * (BH / 4.5);
+          ctx.fillRect(BX + 10, y, 15, 2);
+          ctx.fillText(`${i * 100}ml`, BX + 30, y + 4);
+        }
+
+        }
+
+        if (equipment.scales) {
+          const practicalLayout = activePractical === 'conservation-of-mass';
+          const SX = practicalLayout ? 26 : 24;
+          const SY = practicalLayout ? 526 : 534;
+          const SW = practicalLayout ? 164 : 152;
+          const SH = practicalLayout ? 92 : 86;
+
+          // -----------------------------
+          // Helpers (safe to keep inline)
+          // -----------------------------
+          const rr = (x, y, w, h, r) => {
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, r);
+          };
+
+          const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+          // Subtle noise for "painted metal" / realism (cheap + deterministic-ish)
+          const addNoise = (x, y, w, h, alpha = 0.06, step = 3) => {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (let yy = y; yy < y + h; yy += step) {
+              for (let xx = x; xx < x + w; xx += step) {
+                const n = (Math.random() * 2 - 1) * 12; // -12..12
+                ctx.fillStyle = `rgb(${128 + n},${128 + n},${128 + n})`;
+                ctx.fillRect(xx, yy, 1, 1);
+              }
+            }
+            ctx.restore();
+          };
+
+          // -----------------------------
+          // 3D base / shadow
+          // -----------------------------
+          ctx.save();
+
+          // Drop shadow on the whole device (gives "lift" from the surface)
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 14;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 8;
+
+          // Outer body (painted metal, slightly warm/cool variation)
+          const bodyGrad = ctx.createLinearGradient(SX, SY, SX + SW, SY + SH);
+          bodyGrad.addColorStop(0, 'rgba(71,85,105,0.98)');   // slate-600
+          bodyGrad.addColorStop(0.45, 'rgba(30,41,59,0.985)'); // slate-800
+          bodyGrad.addColorStop(1, 'rgba(15,23,42,0.99)');     // slate-900
+
+          ctx.fillStyle = bodyGrad;
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(226,232,240,0.28)';
+
+          // Slight perspective feel: thicker bottom edge (a “base lip”)
+          rr(SX, SY, SW, SH, 12);
+          ctx.fill();
+          ctx.stroke();
+
+          // Remove shadow for internal details (avoid muddying)
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+
+          // Inner bevel (gives depth around the face)
+          const bevelInset = 2.5;
+          const bevelGrad = ctx.createLinearGradient(SX, SY, SX, SY + SH);
+          bevelGrad.addColorStop(0, 'rgba(255,255,255,0.16)');
+          bevelGrad.addColorStop(0.25, 'rgba(255,255,255,0.02)');
+          bevelGrad.addColorStop(1, 'rgba(0,0,0,0.28)');
+          ctx.strokeStyle = bevelGrad;
+          ctx.lineWidth = 2;
+          rr(SX + bevelInset, SY + bevelInset, SW - bevelInset * 2, SH - bevelInset * 2, 10);
+          ctx.stroke();
+
+          // Subtle texture (optional; comment out if you want it perfectly clean)
+          addNoise(SX + 6, SY + 6, SW - 12, SH - 12, 0.045, 3);
+
+          // Ambient occlusion under top surface (shadow just inside the top edge)
+          const aoTop = ctx.createLinearGradient(SX, SY, SX, SY + 18);
+          aoTop.addColorStop(0, 'rgba(0,0,0,0.35)');
+          aoTop.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = aoTop;
+          rr(SX + 4, SY + 4, SW - 8, 16, 10);
+          ctx.fill();
+
+          // -----------------------------
+          // Display bezel + glass
+          // -----------------------------
+          const bezelX = SX + 12;
+          const bezelY = SY + 12;
+          const bezelW = SW - 24;
+          const bezelH = 32;
+
+          // Bezel base
+          const bezelGrad = ctx.createLinearGradient(bezelX, bezelY, bezelX + bezelW, bezelY + bezelH);
+          bezelGrad.addColorStop(0, 'rgba(2,6,23,0.95)');
+          bezelGrad.addColorStop(1, 'rgba(15,23,42,0.98)');
+          ctx.fillStyle = bezelGrad;
+          ctx.strokeStyle = 'rgba(148,163,184,0.28)';
+          ctx.lineWidth = 1;
+          rr(bezelX, bezelY, bezelW, bezelH, 7);
+          ctx.fill();
+          ctx.stroke();
+
+          // Glass sheen (diagonal highlight)
+          const glass = ctx.createLinearGradient(bezelX, bezelY, bezelX + bezelW, bezelY + bezelH);
+          glass.addColorStop(0.0, 'rgba(255,255,255,0.20)');
+          glass.addColorStop(0.25, 'rgba(255,255,255,0.05)');
+          glass.addColorStop(0.55, 'rgba(255,255,255,0.00)');
+          glass.addColorStop(1.0, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = glass;
+          rr(bezelX + 1, bezelY + 1, bezelW - 2, bezelH - 2, 6);
+          ctx.fill();
+
+          // Display backlight glow (soft, behind the digits)
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const glow = ctx.createRadialGradient(
+            bezelX + bezelW * 0.35, bezelY + bezelH * 0.55, 4,
+            bezelX + bezelW * 0.35, bezelY + bezelH * 0.55, 36
+          );
+          glow.addColorStop(0, 'rgba(94,234,212,0.22)'); // teal glow
+          glow.addColorStop(1, 'rgba(94,234,212,0.00)');
+          ctx.fillStyle = glow;
+          rr(bezelX + 2, bezelY + 2, bezelW - 4, bezelH - 4, 6);
+          ctx.fill();
+          ctx.restore();
+
+          // Digits (with subtle shadow to pop)
+          const text = `${simState.current.scaleSampleMass.toFixed(2)} g`;
+          ctx.save();
+          ctx.font = '700 16px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+          ctx.fillStyle = '#5eead4';
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 2;
+          ctx.shadowOffsetY = 1;
+          ctx.fillText(text, bezelX + 14, bezelY + 22);
+          ctx.restore();
+
+          // Tiny indicator dots (adds realism)
+          ctx.save();
+          const dotY = bezelY + bezelH - 8;
+          for (let i = 0; i < 5; i++) {
+            const dx = bezelX + 14 + i * 10;
+            const on = i === clamp(Math.floor(simState.current.scaleSampleMass > 0 ? 3 : 1), 0, 4);
+            ctx.fillStyle = on ? 'rgba(94,234,212,0.9)' : 'rgba(148,163,184,0.35)';
+            ctx.beginPath();
+            ctx.arc(dx, dotY, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+
+          // -----------------------------
+          // Weighing pan (metallic, 3D)
+          // -----------------------------
+          const panCX = SX + SW / 2;
+          const panCY = SY + 60;
+
+          // Soft shadow beneath pan
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.28)';
+          ctx.beginPath();
+          ctx.ellipse(panCX, panCY + 3, 48, 12, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // Pan top (brushed steel)
+          ctx.save();
+          const panTop = ctx.createRadialGradient(panCX - 10, panCY - 6, 6, panCX, panCY, 54);
+          panTop.addColorStop(0, 'rgba(248,250,252,0.95)');
+          panTop.addColorStop(0.25, 'rgba(226,232,240,0.88)');
+          panTop.addColorStop(0.55, 'rgba(148,163,184,0.70)');
+          panTop.addColorStop(1, 'rgba(71,85,105,0.65)');
+          ctx.fillStyle = panTop;
+          ctx.strokeStyle = 'rgba(15,23,42,0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(panCX, panCY, 46, 11, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Pan rim highlight
+          ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(panCX, panCY - 1, 44, 10, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Pan specular streak (brushed look)
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+          for (let i = -18; i <= 18; i += 3) {
+            ctx.beginPath();
+            ctx.moveTo(panCX + i, panCY - 8);
+            ctx.lineTo(panCX + i + 10, panCY + 8);
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          // Sample on pan (more 3D + shadow)
+          if (simState.current.scaleSampleMass > 0) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.18)';
+            ctx.beginPath();
+            ctx.ellipse(panCX + 2, panCY + 1, 16, 5.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            const sampleGrad = ctx.createRadialGradient(panCX - 4, panCY - 2, 2, panCX, panCY, 20);
+            sampleGrad.addColorStop(0, 'rgba(248,250,252,0.98)');
+            sampleGrad.addColorStop(1, 'rgba(203,213,225,0.9)');
+            ctx.fillStyle = sampleGrad;
+            ctx.strokeStyle = 'rgba(71,85,105,0.35)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(panCX, panCY - 1, 15, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // -----------------------------
+          // Buttons (3D pill buttons)
+          // -----------------------------
+          const btnY = SY + 72;
+          const btnW = 18;
+          const btnH = 10;
+
+          const drawButton = (x) => {
+            // Button shadow
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.28)';
+            rr(x + 1, btnY + 2, btnW, btnH, 3);
+            ctx.fill();
+
+            // Button body gradient
+            const bg = ctx.createLinearGradient(x, btnY, x, btnY + btnH);
+            bg.addColorStop(0, 'rgba(226,232,240,0.85)');
+            bg.addColorStop(0.55, 'rgba(148,163,184,0.55)');
+            bg.addColorStop(1, 'rgba(100,116,139,0.70)');
+
+            ctx.fillStyle = bg;
+            ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+            ctx.lineWidth = 1;
+            rr(x, btnY, btnW, btnH, 3);
+            ctx.fill();
+            ctx.stroke();
+
+            // Button highlight
+            const hi = ctx.createLinearGradient(x, btnY, x, btnY + 5);
+            hi.addColorStop(0, 'rgba(255,255,255,0.55)');
+            hi.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = hi;
+            rr(x + 1, btnY + 1, btnW - 2, 4, 2);
+            ctx.fill();
+            ctx.restore();
+          };
+
+          drawButton(SX + 16);
+          drawButton(SX + SW - 34);
+
+          // -----------------------------
+          // Top gloss strip (more “3D casing”)
+          // -----------------------------
+          const topGloss = ctx.createLinearGradient(SX + 6, SY + 2, SX + SW - 6, SY + 22);
+          topGloss.addColorStop(0, 'rgba(255,255,255,0.22)');
+          topGloss.addColorStop(0.35, 'rgba(255,255,255,0.08)');
+          topGloss.addColorStop(1, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = topGloss;
+          rr(SX + 6, SY + 2, SW - 12, 18, 8);
+          ctx.fill();
+
+          // Bottom edge “lip” highlight (gives thickness)
+          const lip = ctx.createLinearGradient(SX, SY + SH - 14, SX, SY + SH);
+          lip.addColorStop(0, 'rgba(0,0,0,0)');
+          lip.addColorStop(1, 'rgba(255,255,255,0.10)');
+          ctx.fillStyle = lip;
+          rr(SX + 4, SY + SH - 12, SW - 8, 10, 8);
+          ctx.fill();
+
+          ctx.restore();
+        }
+
+        if (equipment.tripod) {
+          const TX = 430;
+          const TY = 478;
+          ctx.strokeStyle = 'rgba(226,232,240,0.9)';
+          ctx.lineWidth = 3.4;
+          ctx.beginPath();
+          ctx.moveTo(TX - 30, TY - 52);
+          ctx.lineTo(TX - 52, TY + 2);
+          ctx.moveTo(TX + 30, TY - 52);
+          ctx.lineTo(TX + 52, TY + 2);
+          ctx.moveTo(TX, TY - 52);
+          ctx.lineTo(TX, TY + 6);
+          ctx.moveTo(TX - 34, TY - 49);
+          ctx.lineTo(TX + 34, TY - 49);
+          ctx.stroke();
+        }
+
+        if (equipment.gauze) {
+          const GX = 430;
+          const GY = 426;
+          ctx.strokeStyle = 'rgba(226,232,240,0.8)';
+          ctx.lineWidth = 1.4;
+          ctx.strokeRect(GX - 34, GY - 10, 68, 20);
+          for (let i = -30; i <= 30; i += 6) {
+            ctx.beginPath();
+            ctx.moveTo(GX + i, GY - 10);
+            ctx.lineTo(GX + i, GY + 10);
+            ctx.moveTo(GX - 34, GY + i * 0.33);
+            ctx.lineTo(GX + 34, GY + i * 0.33);
+            ctx.stroke();
+          }
+        }
+
+        if (equipment.crucible) {
+          const CX = simState.current.crucibleX;
+          const CY = simState.current.crucibleY;
+          const tempTint = Math.min(1, (simState.current.crucibleTemp - 20) / 700);
+          const crucibleGrad = ctx.createLinearGradient(CX - 30, CY - 16, CX + 30, CY + 14);
+          crucibleGrad.addColorStop(0, `rgba(${Math.round(55 + tempTint * 170)}, ${Math.round(56 + tempTint * 86)}, ${Math.round(70 - tempTint * 30)}, 0.98)`);
+          crucibleGrad.addColorStop(1, `rgba(${Math.round(35 + tempTint * 120)}, ${Math.round(36 + tempTint * 50)}, ${Math.round(45 - tempTint * 22)}, 0.98)`);
+          ctx.fillStyle = crucibleGrad;
+          ctx.beginPath();
+          ctx.ellipse(CX, CY, 30, 16, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(241,245,249,0.85)';
+          ctx.lineWidth = 2.2;
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(12,18,34,0.9)';
+          ctx.beginPath();
+          ctx.ellipse(CX, CY - 2, 20, 8.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (simState.current.crucibleMgMass > 0) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.beginPath();
+            ctx.ellipse(CX, CY - 2, Math.min(14, 4 + simState.current.crucibleMgMass * 2.5), 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          if (simState.current.magnesiumBurning) {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.beginPath();
+            ctx.ellipse(CX, CY - 8, 15, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.fillStyle = 'rgba(203,213,225,0.85)';
+          ctx.font = '11px monospace';
+          ctx.fillText(`Mg: ${simState.current.crucibleMgMass.toFixed(2)} g`, CX - 42, CY - 24);
+          ctx.fillText(`MgO: ${simState.current.crucibleResidueMass.toFixed(2)} g`, CX - 46, CY + 35);
+
+          if (!simState.current.crucibleOnSupport && activePractical === 'conservation-of-mass') {
+            ctx.fillStyle = 'rgba(148,163,184,0.75)';
+            ctx.font = '10px sans-serif';
+            ctx.fillText('Drag crucible to gauze', CX - 48, CY + 54);
+          }
+        }
+
+        if (equipment.bunsen) {
+          const BX2 = 430;
+          const BY2 = 530;
+
+          // -----------------------------
+          // Helpers
+          // -----------------------------
+          const rr = (x, y, w, h, r) => {
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, r);
+          };
+
+          const addNoise = (x, y, w, h, alpha = 0.05, step = 3) => {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (let yy = y; yy < y + h; yy += step) {
+              for (let xx = x; xx < x + w; xx += step) {
+                const n = (Math.random() * 2 - 1) * 10;
+                ctx.fillStyle = `rgb(${128 + n},${128 + n},${128 + n})`;
+                ctx.fillRect(xx, yy, 1, 1);
+              }
+            }
+            ctx.restore();
+          };
+
+          ctx.save();
+
+          // -----------------------------
+          // Ground shadow (lifts it off the surface)
+          // -----------------------------
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.30)';
+          ctx.beginPath();
+          ctx.ellipse(BX2, BY2 + 33, 30, 8, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // -----------------------------
+          // Base (3D with lip + bevel + gloss)
+          // -----------------------------
+          const baseX = BX2 - 24;
+          const baseY = BY2 + 18;
+          const baseW = 48;
+          const baseH = 20;
+
+          // Drop shadow for base itself
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetY = 5;
+
+          const baseGrad = ctx.createLinearGradient(baseX, baseY, baseX + baseW, baseY + baseH);
+          baseGrad.addColorStop(0, 'rgba(71,85,105,0.98)');
+          baseGrad.addColorStop(0.5, 'rgba(30,41,59,0.985)');
+          baseGrad.addColorStop(1, 'rgba(15,23,42,0.99)');
+          ctx.fillStyle = baseGrad;
+          ctx.strokeStyle = 'rgba(226,232,240,0.25)';
+          ctx.lineWidth = 1.2;
+
+          rr(baseX, baseY, baseW, baseH, 6);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+
+          // Inner bevel stroke (adds depth)
+          const bevelGrad = ctx.createLinearGradient(baseX, baseY, baseX, baseY + baseH);
+          bevelGrad.addColorStop(0, 'rgba(255,255,255,0.18)');
+          bevelGrad.addColorStop(0.35, 'rgba(255,255,255,0.03)');
+          bevelGrad.addColorStop(1, 'rgba(0,0,0,0.28)');
+          ctx.strokeStyle = bevelGrad;
+          ctx.lineWidth = 2;
+          rr(baseX + 2, baseY + 2, baseW - 4, baseH - 4, 5);
+          ctx.stroke();
+
+          // Base top gloss
+          const baseGloss = ctx.createLinearGradient(baseX + 4, baseY + 1, baseX + baseW - 4, baseY + 12);
+          baseGloss.addColorStop(0, 'rgba(255,255,255,0.20)');
+          baseGloss.addColorStop(0.4, 'rgba(255,255,255,0.07)');
+          baseGloss.addColorStop(1, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = baseGloss;
+          rr(baseX + 3, baseY + 1, baseW - 6, 10, 5);
+          ctx.fill();
+
+          // Subtle texture on base
+          addNoise(baseX + 4, baseY + 4, baseW - 8, baseH - 8, 0.04, 3);
+
+          // Base lip highlight (thickness)
+          const lip = ctx.createLinearGradient(baseX, baseY + baseH - 6, baseX, baseY + baseH);
+          lip.addColorStop(0, 'rgba(0,0,0,0)');
+          lip.addColorStop(1, 'rgba(255,255,255,0.10)');
+          ctx.fillStyle = lip;
+          rr(baseX + 3, baseY + baseH - 5, baseW - 6, 4, 4);
+          ctx.fill();
+
+          // -----------------------------
+          // Barrel (metal cylinder with specular + shadow)
+          // -----------------------------
+          const barrelX = BX2 - 4;
+          const barrelY = BY2 - 36;
+          const barrelW = 8;
+          const barrelH = 56;
+
+          // Barrel body gradient (cylindrical look)
+          const barrelGrad = ctx.createLinearGradient(barrelX, barrelY, barrelX + barrelW, barrelY);
+          barrelGrad.addColorStop(0.0, 'rgba(148,163,184,0.25)');
+          barrelGrad.addColorStop(0.18, 'rgba(248,250,252,0.95)');
+          barrelGrad.addColorStop(0.48, 'rgba(203,213,225,0.90)');
+          barrelGrad.addColorStop(0.78, 'rgba(148,163,184,0.70)');
+          barrelGrad.addColorStop(1.0, 'rgba(71,85,105,0.60)');
+
+          // Slight shadow to the right (gives separation from background)
+          ctx.save();
+          ctx.shadowColor = 'rgba(0,0,0,0.25)';
+          ctx.shadowBlur = 6;
+          ctx.shadowOffsetX = 2;
+          ctx.shadowOffsetY = 2;
+
+          ctx.fillStyle = barrelGrad;
+          rr(barrelX, barrelY, barrelW, barrelH, 3);
+          ctx.fill();
+
+          ctx.restore();
+
+          // Barrel edge strokes (definition)
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          rr(barrelX, barrelY, barrelW, barrelH, 3);
+          ctx.stroke();
+
+          // Specular highlight strip (sharp shine)
+          const spec = ctx.createLinearGradient(barrelX, barrelY, barrelX + barrelW, barrelY);
+          spec.addColorStop(0, 'rgba(255,255,255,0)');
+          spec.addColorStop(0.35, 'rgba(255,255,255,0.38)');
+          spec.addColorStop(0.55, 'rgba(255,255,255,0.06)');
+          spec.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = spec;
+          rr(barrelX + 1, barrelY + 1, 3, barrelH - 2, 2);
+          ctx.fill();
+
+          // Barrel top ring (opening)
+          ctx.save();
+          const ringY = barrelY - 2;
+          ctx.fillStyle = 'rgba(30,41,59,0.95)';
+          ctx.beginPath();
+          ctx.ellipse(BX2, ringY, 7.5, 2.8, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          const ringHi = ctx.createLinearGradient(BX2 - 8, ringY - 2, BX2 + 8, ringY + 2);
+          ringHi.addColorStop(0, 'rgba(255,255,255,0.18)');
+          ringHi.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+          ringHi.addColorStop(1, 'rgba(0,0,0,0.22)');
+          ctx.strokeStyle = ringHi;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(BX2, ringY, 7.5, 2.8, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // -----------------------------
+          // Collar / air control (3D knob)
+          // -----------------------------
+          const collarW = 14;
+          const collarX = BX2 - collarW / 2;
+          const collarY = BY2 - 7;
+          const collarH = 12;
+
+          // Collar shadow
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.18)';
+          rr(collarX + 1, collarY + 2, collarW, collarH, 4);
+          ctx.fill();
+          ctx.restore();
+
+          // Collar body
+          const collarGrad = ctx.createLinearGradient(collarX, collarY, collarX, collarY + collarH);
+          collarGrad.addColorStop(0, 'rgba(148,163,184,0.70)');
+          collarGrad.addColorStop(0.5, 'rgba(100,116,139,0.90)');
+          collarGrad.addColorStop(1, 'rgba(51,65,85,0.95)');
+          ctx.fillStyle = collarGrad;
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          rr(collarX, collarY, collarW, collarH, 4);
+          ctx.fill();
+          ctx.stroke();
+
+          // Collar highlight
+          const collarHi = ctx.createLinearGradient(collarX, collarY, collarX, collarY + 6);
+          collarHi.addColorStop(0, 'rgba(255,255,255,0.35)');
+          collarHi.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = collarHi;
+          rr(collarX + 1, collarY + 1, collarW - 2, 5, 3);
+          ctx.fill();
+
+          // -----------------------------
+          // Gas inlet / side port (more 3D)
+          // -----------------------------
+          const portCX = collarX - 7;
+          const portCY = collarY + collarH / 2;
+
+          // Port shadow
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.22)';
+          ctx.beginPath();
+          ctx.ellipse(portCX + 1.5, portCY + 1.2, 8, 4.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // Port body (metal)
+          const portGrad = ctx.createRadialGradient(portCX - 2, portCY - 2, 2, portCX, portCY, 12);
+          portGrad.addColorStop(0, 'rgba(248,250,252,0.95)');
+          portGrad.addColorStop(0.35, 'rgba(203,213,225,0.88)');
+          portGrad.addColorStop(1, 'rgba(71,85,105,0.78)');
+          ctx.fillStyle = portGrad;
+          ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.ellipse(portCX, portCY, 8, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          // Port highlight
+          ctx.save();
+          ctx.globalAlpha = 0.55;
+          ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+          ctx.beginPath();
+          ctx.ellipse(portCX - 1, portCY - 1, 6.5, 3.0, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          // -----------------------------
+          // Flame (with glow + core)
+          // -----------------------------
+          if (equipment.bunsenLit) {
+            const flicker = (Math.random() - 0.5) * 4;
+
+            // Outer glow
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            const glow = ctx.createRadialGradient(BX2, BY2 - 22 + flicker, 6, BX2, BY2 - 22 + flicker, 42);
+            glow.addColorStop(0, 'rgba(56,189,248,0.22)');
+            glow.addColorStop(0.5, 'rgba(56,189,248,0.10)');
+            glow.addColorStop(1, 'rgba(56,189,248,0.00)');
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.ellipse(BX2, BY2 - 22 + flicker, 22, 30, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Main flame
+            ctx.beginPath();
+            ctx.moveTo(BX2, BY2 - 42 + flicker);
+            ctx.quadraticCurveTo(BX2 - 13, BY2 - 18, BX2, BY2 - 2);
+            ctx.quadraticCurveTo(BX2 + 13, BY2 - 18, BX2, BY2 - 42 + flicker);
+            const flameGrad = ctx.createLinearGradient(BX2, BY2 - 44 + flicker, BX2, BY2 - 2);
+            flameGrad.addColorStop(0, 'rgba(147,197,253,0.95)');
+            flameGrad.addColorStop(0.55, 'rgba(56,189,248,0.90)');
+            flameGrad.addColorStop(1, 'rgba(14,165,233,0.55)');
+            ctx.fillStyle = flameGrad;
+            ctx.fill();
+
+            // Inner core
+            ctx.beginPath();
+            ctx.moveTo(BX2, BY2 - 34 + flicker);
+            ctx.quadraticCurveTo(BX2 - 7.5, BY2 - 18, BX2, BY2 - 6);
+            ctx.quadraticCurveTo(BX2 + 7.5, BY2 - 18, BX2, BY2 - 34 + flicker);
+            const coreGrad = ctx.createLinearGradient(BX2, BY2 - 36 + flicker, BX2, BY2 - 6);
+            coreGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
+            coreGrad.addColorStop(0.6, 'rgba(186,230,253,0.92)');
+            coreGrad.addColorStop(1, 'rgba(147,197,253,0.75)');
+            ctx.fillStyle = coreGrad;
+            ctx.fill();
+
+            // Tiny hot tip highlight
+            ctx.save();
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.beginPath();
+            ctx.ellipse(BX2 + 2, BY2 - 34 + flicker, 2.2, 3.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          ctx.restore();
+        }
+
+        requestRef.current = requestAnimationFrame(draw);
+      }, [equipment, isBeakerTargeted, activePractical]);
+
+      useEffect(() => {
+        requestRef.current = requestAnimationFrame(draw);
+        return () => cancelAnimationFrame(requestRef.current);
+      }, [draw]);
+
+      useEffect(() => {
+        const interval = setInterval(() => {
+          setUiState((prev) => ({
+            ...prev,
+            temp: Math.round(simState.current.temp),
+            volume: Math.round(simState.current.volume),
+            ph: Number(simState.current.ph.toFixed(1)),
+            gasVolume: Math.round(simState.current.gasVolume)
+          }));
+        }, 200);
+        return () => clearInterval(interval);
+      }, []);
+
+      const changeTemp = (delta) => {
+        applyThermalChange(delta, 0.01);
+        simState.current.temp = Math.max(-10, Math.min(220, simState.current.temp));
+        if (delta > 0) {
+          simState.current.particles.push({
+            type: 'fire',
+            x: 220 + (Math.random() - 0.5) * 64,
+            y: 590,
+            vx: 0,
+            vy: -1,
+            life: 0.5,
+            size: 5,
+            color: '#f59e0b'
+          });
+        }
+      };
+
+      const toggleEquipment = (item) => {
+        setEquipment((prev) => {
+          const next = { ...prev, [item]: !prev[item] };
+          if (item === 'bunsen' && !next.bunsen) next.bunsenLit = false;
+          return next;
+        });
+
+        if (item === 'syringe' && !equipment.syringe) simState.current.gasVolume = 0;
+        if (item === 'scales' && equipment.scales) {
+          simState.current.scaleSampleMass = 0;
+          simState.current.scaleSampleName = null;
+        }
+      };
+
+      const exitPractical = () => {
+        setActivePractical(null);
+        setEquipment({
+          syringe: false,
+          thermometer: true,
+          bunsen: false,
+          bunsenLit: false,
+          crucible: false,
+          tripod: false,
+          gauze: false,
+          scales: false
+        });
+        setActiveTab('chemicals');
+        clearBeaker();
+      };
+
+      const equipmentCards = [
+        { key: 'syringe', title: 'Gas Syringe', desc: 'Collects reaction gases', emoji: '💉' },
+        { key: 'bunsen', title: 'Bunsen Burner', desc: 'Slowly heats apparatus', emoji: '🔥' },
+        { key: 'crucible', title: 'Crucible', desc: 'For magnesium combustion', emoji: '⚱️' },
+        { key: 'tripod', title: 'Tripod', desc: 'Supports crucible/gauze', emoji: '🛠️' },
+        { key: 'gauze', title: 'Wire Gauze', desc: 'Distributes heat', emoji: '🧰' },
+        { key: 'scales', title: 'Electronic Scales', desc: 'Weigh solid samples', emoji: '⚖️' }
+      ];
+
+      return (
+        <div className="flex flex-col md:flex-row h-screen w-full bg-slate-900 text-slate-100 font-sans overflow-hidden">
+          <div className="w-full md:w-80 bg-slate-800 border-r border-slate-700 flex flex-col z-20 shadow-xl">
+            <div className="p-5 border-b border-slate-700 bg-slate-800">
+              <h1 className="text-xl font-bold flex items-center gap-2 text-sky-400">
+                <FlaskConical className="w-6 h-6" />
+                ChemLab Pro
+              </h1>
+              <p className="text-xs text-slate-400 mt-1">Virtual Workbench</p>
+            </div>
+
+            <div className="flex border-b border-slate-700">
+              <button
+                onClick={() => setActiveTab('chemicals')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chemicals' ? 'text-sky-400 border-b-2 border-sky-400 bg-slate-700/50' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Chemicals
+              </button>
+              <button
+                onClick={() => setActiveTab('equipment')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'equipment' ? 'text-sky-400 border-b-2 border-sky-400 bg-slate-700/50' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Equipment
+              </button>
+            </div>
+            <div className="border-b border-slate-700 px-2 py-2 bg-slate-800/70">
+              <button
+                onClick={() => setActiveTab('practicals')}
+                className={`w-full py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'practicals' ? 'text-sky-300 bg-slate-700/60 border border-sky-500/40' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/40 border border-slate-700'}`}
+              >
+                Practicals ⚗️
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {activeTab === 'chemicals' ? (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Drag chemicals to the beaker</p>
+                  {CHEMICALS.map((chem) => (
+                    <div
+                      key={chem.id}
+                      draggable
+                      onDragStart={(event) => handleDragStart(event, chem.id)}
+                      onClick={() => addChemical(chem.id)}
+                      className="w-full group relative p-3 rounded-xl bg-slate-700/50 hover:bg-slate-600 border border-slate-600 hover:border-sky-500 transition-all flex items-center gap-4 text-left cursor-grab active:cursor-grabbing"
+                    >
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center bg-slate-800 border border-slate-600 text-lg shadow-sm group-hover:scale-110 transition-transform">
+                        {chem.icon}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-200">{chem.name}</div>
+                        <div className="text-xs text-slate-400">{chem.desc}</div>
+                      </div>
+                      <GripVertical className="absolute right-3 top-3 text-slate-600 w-4 h-4 opacity-50" />
+                    </div>
+                  ))}
+                </>
+              ) : activeTab === 'equipment' ? (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Toggle apparatus on bench</p>
+                  {equipmentCards.map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() => toggleEquipment(item.key)}
+                      className={`w-full p-4 rounded-xl border transition-all flex items-center gap-4 text-left ${(equipment[item.key]) ? 'bg-sky-900/30 border-sky-500' : 'bg-slate-700/30 border-slate-600 hover:bg-slate-700'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border text-lg ${(equipment[item.key]) ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>
+                        {item.emoji}
+                      </div>
+                      <div>
+                        <div className={`font-semibold ${(equipment[item.key]) ? 'text-sky-400' : 'text-slate-200'}`}>{item.title}</div>
+                        <div className="text-xs text-slate-400">{item.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+
+                  {equipment.bunsen && (
+                    <button
+                      onClick={() => setEquipment((prev) => ({ ...prev, bunsenLit: !prev.bunsenLit }))}
+                      className={`w-full py-2 rounded-lg font-medium border ${equipment.bunsenLit ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-slate-700/40 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
+                    >
+                      {equipment.bunsenLit ? 'Extinguish Bunsen' : 'Ignite Bunsen'}
+                    </button>
+                  )}
+
+                  {equipment.scales && (
+                    <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-3 space-y-2">
+                      <div className="text-xs text-slate-300">Scale reading: {simState.current.scaleSampleMass.toFixed(2)} g</div>
+                      <div className="flex gap-2">
+                        <button onClick={() => weighSample('mg', 0.5)} className="flex-1 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500">Weigh Mg 0.50 g</button>
+                        <button onClick={() => weighSample('mg', 1.0)} className="flex-1 py-1.5 text-xs rounded bg-slate-600 hover:bg-slate-500">Weigh Mg 1.00 g</button>
+                      </div>
+                      {equipment.crucible && (
+                        <button onClick={transferScaleToCrucible} className="w-full py-1.5 text-xs rounded bg-sky-600 hover:bg-sky-500">Transfer weighed Mg to crucible</button>
+                      )}
+
+                      {equipment.crucible && simState.current.crucibleMgMass > 0 && (
+                        <div
+                          draggable
+                          onDragStart={(event) => handleLabItemDragStart(event, 'crucible_with_mg')}
+                          className="w-full py-1.5 text-xs rounded border border-amber-400/40 bg-amber-500/10 text-amber-200 text-center cursor-grab active:cursor-grabbing"
+                        >
+                          Drag Crucible + Mg onto Gauze
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 mb-2">Load a practical setup into the lab</p>
+                  <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-4">
+                    <div className="flex items-center gap-2 font-semibold text-slate-100">
+                      <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center">⚖️</span>
+                      <span>Conservation of Mass</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">Auto-loads magnesium, electronic scales, crucible, tripod, gauze, and bunsen burner setup.</div>
+                    <button onClick={loadConservationPractical} className="mt-3 w-full py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">Load Practical</button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 bg-slate-800/80 backdrop-blur">
+              <button
+                onClick={activePractical ? exitPractical : clearBeaker}
+                className="w-full py-3 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg flex items-center justify-center gap-2 transition-colors font-medium"
+              >
+                <Trash2 className="w-4 h-4" />
+                {activePractical ? 'Exit Practical' : 'Empty Beaker'}
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="flex-1 relative flex flex-col bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950"
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <button
+              onClick={() => setHelpOpenNonce((prev) => prev + 1)}
+              className="absolute top-4 left-4 z-20 px-3 py-2 rounded-lg bg-slate-800/85 border border-slate-700 text-slate-200 hover:bg-slate-700 transition-colors text-sm"
+            >
+              Help
+            </button>
+
+            <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
+              <div className="flex gap-4 md:gap-8 bg-slate-800/80 backdrop-blur-md p-3 md:p-4 rounded-2xl border border-slate-700 shadow-2xl">
+                <MetricItem
+                  label="Temperature"
+                  value={`${uiState.temp}°C`}
+                  icon={<Thermometer className="w-4 h-4 text-orange-400" />}
+                  color={uiState.temp > 80 ? 'text-red-400' : 'text-orange-400'}
+                />
+                <div className="w-px bg-slate-600/50" />
+                <MetricItem
+                  label="Volume"
+                  value={`${uiState.volume} mL`}
+                  icon={<Droplets className="w-4 h-4 text-sky-400" />}
+                  color="text-sky-400"
+                />
+                <div className="w-px bg-slate-600/50" />
+                <MetricItem
+                  label="pH Level"
+                  value={uiState.ph.toFixed(1)}
+                  icon={<Zap className="w-4 h-4 text-emerald-400" />}
+                  color={uiState.ph < 6 ? 'text-red-400' : uiState.ph > 8 ? 'text-purple-400' : 'text-emerald-400'}
+                />
+                {equipment.syringe && (
+                  <>
+                    <div className="w-px bg-slate-600/50" />
+                    <MetricItem
+                      label="Gas Collected"
+                      value={`${uiState.gasVolume} mL`}
+                      icon={<Gauge className="w-4 h-4 text-slate-300" />}
+                      color="text-slate-200"
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {uiState.activeReaction && (
+              <div className="absolute top-28 left-0 right-0 flex justify-center z-20 pointer-events-none">
+                <div className="animate-bounce bg-amber-500 text-slate-900 px-6 py-2 rounded-full font-bold shadow-lg flex items-center gap-2">
+                  <Flame className="w-5 h-5" />
+                  {uiState.activeReaction}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 flex items-center justify-center relative">
+              <div
+                className="absolute inset-0 opacity-10 pointer-events-none"
+                style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '24px 24px' }}
+              />
+
+              <div className="absolute top-4 right-4 z-20 flex flex-col gap-2 bg-slate-800/80 border border-slate-700 rounded-xl p-2 backdrop-blur">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setZoom(view.zoom - 0.1)} className="px-2 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600">−</button>
+                  <span className="text-xs text-slate-300 w-12 text-center">{Math.round(view.zoom * 100)}%</span>
+                  <button onClick={() => setZoom(view.zoom + 0.1)} className="px-2 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600">+</button>
+                </div>
+                <input
+                  type="range"
+                  min="0.7"
+                  max="2"
+                  step="0.05"
+                  value={view.zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                  className="w-28 accent-sky-400"
+                />
+                <div className="grid grid-cols-3 gap-1 place-items-center text-xs">
+                  <span />
+                  <button onClick={() => nudgePan(0, -20)} className="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600">↑</button>
+                  <span />
+                  <button onClick={() => nudgePan(-20, 0)} className="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600">←</button>
+                  <button onClick={resetView} className="w-8 h-8 rounded bg-slate-600 hover:bg-slate-500 text-[10px]">R</button>
+                  <button onClick={() => nudgePan(20, 0)} className="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600">→</button>
+                  <span />
+                  <button onClick={() => nudgePan(0, 20)} className="w-8 h-8 rounded bg-slate-700 hover:bg-slate-600">↓</button>
+                  <span />
+                </div>
+              </div>
+
+              <div
+                className={`transition-all duration-300 ${activeTab === 'chemicals' ? 'scale-100' : 'scale-95'}`}
+                style={{ transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.zoom})` }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  width={520}
+                  height={640}
+                  onMouseDown={handleCanvasMouseDown}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseUp={handleCanvasMouseUp}
+                  onMouseLeave={handleCanvasMouseUp}
+                  className="z-10 cursor-crosshair"
+                />
+              </div>
+            </div>
+
+            {doseEditor && (
+              <DoseEditor
+                doseEditor={doseEditor}
+                chemicals={CHEMICALS}
+                getDoseConfig={getDoseConfig}
+                onChange={(value) => setDoseEditor((prev) => ({ ...prev, amount: Number(value) }))}
+                onCancel={cancelDose}
+                onConfirm={confirmDose}
+              />
+            )}
+
+            {activePractical !== 'conservation-of-mass' && (
+              <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+                <HoldButton
+                  onHold={() => changeTemp(1.5)}
+                  className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                  icon={<Flame className="w-6 h-6" />}
+                  label="HEAT"
+                />
+                <HoldButton
+                  onHold={() => changeTemp(-1.5)}
+                  className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+                  icon={<Snowflake className="w-6 h-6" />}
+                  label="COOL"
+                />
+              </div>
+            )}
+          </div>
+
+          <HelpModal forceOpenNonce={helpOpenNonce} />
+        </div>
+      );
+    }
+
+    function MetricItem({ label, value, icon, color }) {
+      return (
+        <div className="flex flex-col items-center min-w-[80px]">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
+            {icon} {label}
+          </div>
+          <div className={`text-2xl font-mono font-bold ${color}`}>{value}</div>
+        </div>
+      );
+    }
+
+    function HoldButton({ onHold, className, icon, label }) {
+      const intervalRef = useRef(null);
+
+      const start = (event) => {
+        event.preventDefault();
+        onHold();
+        intervalRef.current = setInterval(onHold, 50);
+      };
+
+      const stop = (event) => {
+        if (event) event.preventDefault();
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      };
+
+      return (
+        <button
+          onMouseDown={start}
+          onMouseUp={stop}
+          onMouseLeave={stop}
+          onTouchStart={start}
+          onTouchEnd={stop}
+          className={`flex items-center gap-3 px-8 py-4 rounded-full font-bold transition-all active:scale-95 select-none ${className}`}
+        >
+          {icon}
+          <span>{label}</span>
+        </button>
+      );
+    }
+
+    function DoseEditor({ doseEditor, chemicals, getDoseConfig, onChange, onCancel, onConfirm }) {
+      const chem = chemicals.find((item) => item.id === doseEditor.chemId);
+      if (!chem) return null;
+      const cfg = getDoseConfig(chem);
+      const amountText = chem.type === 'liquid' ? Math.round(doseEditor.amount) : doseEditor.amount.toFixed(1);
+      const progress = ((doseEditor.amount - cfg.min) / (cfg.max - cfg.min)) * 100;
+
+      return (
+        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-30 w-[min(92vw,540px)] dose-slide-up">
+          <div className="rounded-2xl border border-slate-600 bg-slate-800/95 backdrop-blur-lg shadow-2xl p-4 md:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-400">Drag Drop Dosing</p>
+                <h3 className="text-slate-100 font-semibold">{chem.name}</h3>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-400">Selected {cfg.label}</p>
+                <p className="text-xl font-mono font-bold text-sky-300">{amountText} {cfg.unit}</p>
+              </div>
+            </div>
+
+            <div className="relative h-14 rounded-xl bg-slate-900/70 border border-slate-700 mb-4 overflow-hidden">
+              <div className="absolute left-1/2 -translate-x-1/2 top-0 w-1 h-10 bg-sky-300 stream-pulse" style={{ height: `${24 + progress * 0.18}px` }} />
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-1 w-28 h-5 rounded-full border border-slate-500 bg-slate-700/40" />
+              <div className="absolute left-2 right-2 bottom-1 h-2 rounded-full bg-gradient-to-r from-cyan-500/30 to-blue-400/60" style={{ width: `${Math.max(8, progress)}%` }} />
+            </div>
+
+            <input
+              type="range"
+              min={cfg.min}
+              max={cfg.max}
+              step={cfg.step}
+              value={doseEditor.amount}
+              onChange={(event) => onChange(event.target.value)}
+              className="w-full accent-sky-400"
+            />
+
+            <div className="mt-4 flex gap-3 justify-end">
+              <button
+                onClick={onCancel}
+                className="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-600 text-white font-semibold transition-colors"
+              >
+                Add to Beaker
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function HelpModal({ forceOpenNonce = 0 }) {
+      const [isOpen, setIsOpen] = useState(() => {
+        try {
+          return localStorage.getItem(LAB_GUIDE_STORAGE_KEY) !== '1';
+        } catch {
+          return true;
+        }
+      });
+
+      useEffect(() => {
+        if (forceOpenNonce > 0) setIsOpen(true);
+      }, [forceOpenNonce]);
+
+      const closeModal = () => {
+        setIsOpen(false);
+        try {
+          localStorage.setItem(LAB_GUIDE_STORAGE_KEY, '1');
+        } catch {
+        }
+      };
+
+      if (!isOpen) return null;
+
+      return (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl relative">
+            <button onClick={closeModal} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-xl font-bold text-sky-400 mb-4 flex items-center gap-2">
+              <Info className="w-5 h-5" /> Lab Guide
+            </h2>
+            <ul className="space-y-3 text-slate-300 text-sm">
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">A</span>
+                <span>Mg + HCl generates H₂ gas and warms the beaker.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">B</span>
+                <span>CuSO₄ + H₂O forms a blue solution.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">C</span>
+                <span>NH₄NO₃ + H₂O is endothermic and cools the beaker.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">D</span>
+                <span>HCl + NaOH neutralizes toward pH 7.</span>
+              </li>
+            </ul>
+            <button
+              onClick={closeModal}
+              className="mt-6 w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 rounded-lg transition-colors"
+            >
+              Start Experimenting
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ChemistryLab />);
+  </script>
+</body>
+</html>
