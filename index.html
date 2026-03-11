@@ -752,10 +752,7 @@
           } else if (!s.glowingSplintCharged) {
             setUiState((prev) => ({ ...prev, activeReaction: 'Charge a glowing splint first' }));
           } else {
-            s.oxygenGas = Math.max(0, s.oxygenGas - 18);
-            s.glowingSplintCharged = false;
-            setUiState((prev) => ({ ...prev, activeReaction: 'Splint relights brightly: Oxygen confirmed' }));
-            triggerReaction('steam', 0.35);
+            setUiState((prev) => ({ ...prev, activeReaction: 'Drag the glowing splint through the oxygen bubbles' }));
           }
           setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
         }
