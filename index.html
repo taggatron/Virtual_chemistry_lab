@@ -142,6 +142,8 @@
         oxygenGas: 0,
         limewaterCloudy: false,
         glowingSplintCharged: false,
+        splintFlaming: false,
+        splintFlameProgress: 0,
         oxygenSplintX: 330,
         oxygenSplintY: 220,
         oxygenSplintDragging: false,
@@ -349,6 +351,8 @@
           oxygenGas: 0,
           limewaterCloudy: false,
           glowingSplintCharged: false,
+          splintFlaming: false,
+          splintFlameProgress: 0,
           oxygenSplintX: 330,
           oxygenSplintY: 220,
           oxygenSplintDragging: false,
@@ -476,6 +480,22 @@
         if (s.oxygenSplintDragging) {
           s.oxygenSplintX = Math.max(80, Math.min(470, point.x - s.oxygenSplintOffsetX));
           s.oxygenSplintY = Math.max(120, Math.min(560, point.y - s.oxygenSplintOffsetY));
+
+          if (activePractical === 'gas-test-oxygen') {
+            const inBubbleZone = s.oxygenSplintX > 175 && s.oxygenSplintX < 270 && s.oxygenSplintY > 190 && s.oxygenSplintY < 380;
+            if (inBubbleZone && s.oxygenGas >= 6 && s.glowingSplintCharged) {
+              s.oxygenGas = Math.max(0, s.oxygenGas - 18);
+              s.glowingSplintCharged = false;
+              s.splintFlaming = true;
+              s.splintFlameProgress = 0;
+              setUiState((prev) => ({ ...prev, activeReaction: 'Splint relights brightly: Oxygen confirmed' }));
+              triggerReaction('steam', 0.35);
+              setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+              setTimeout(() => {
+                s.splintFlaming = false;
+              }, 2600);
+            }
+          }
           return;
         }
 
@@ -491,13 +511,18 @@
           s.oxygenSplintDragging = false;
 
           if (activePractical === 'gas-test-oxygen') {
-            const inBubbleZone = s.oxygenSplintX > 185 && s.oxygenSplintX < 255 && s.oxygenSplintY > 210 && s.oxygenSplintY < 360;
-            if (inBubbleZone && s.oxygenGas >= 10 && s.glowingSplintCharged) {
+            const inBubbleZone = s.oxygenSplintX > 175 && s.oxygenSplintX < 270 && s.oxygenSplintY > 190 && s.oxygenSplintY < 380;
+            if (inBubbleZone && s.oxygenGas >= 6 && s.glowingSplintCharged) {
               s.oxygenGas = Math.max(0, s.oxygenGas - 18);
               s.glowingSplintCharged = false;
+              s.splintFlaming = true;
+              s.splintFlameProgress = 0;
               setUiState((prev) => ({ ...prev, activeReaction: 'Splint relights brightly: Oxygen confirmed' }));
               triggerReaction('steam', 0.35);
               setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+              setTimeout(() => {
+                s.splintFlaming = false;
+              }, 2600);
             }
           }
         }
@@ -621,6 +646,8 @@
         s.oxygenGas = 0;
         s.limewaterCloudy = false;
         s.glowingSplintCharged = false;
+        s.splintFlaming = false;
+        s.splintFlameProgress = 0;
         s.oxygenSplintX = 330;
         s.oxygenSplintY = 220;
         s.oxygenSplintDragging = false;
@@ -729,6 +756,8 @@
           setUiState((prev) => ({ ...prev, activeReaction: 'Ignite bunsen to light the splint first' }));
         } else {
           simState.current.glowingSplintCharged = true;
+          simState.current.splintFlaming = false;
+          simState.current.splintFlameProgress = 0;
           setUiState((prev) => ({ ...prev, activeReaction: 'Splint glowing and ready for oxygen test' }));
         }
         setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1700);
@@ -2023,6 +2052,12 @@
           const sy = simState.current.oxygenSplintY;
           const splintLen = 78;
 
+          if (simState.current.splintFlaming) {
+            simState.current.splintFlameProgress = Math.min(1, simState.current.splintFlameProgress + 0.12);
+          } else {
+            simState.current.splintFlameProgress = Math.max(0, simState.current.splintFlameProgress - 0.04);
+          }
+
           ctx.save();
           ctx.translate(sx, sy);
           ctx.rotate(-0.08);
@@ -2042,19 +2077,48 @@
           ctx.lineTo(splintLen / 2 - 8, -1);
           ctx.stroke();
 
-          if (simState.current.glowingSplintCharged) {
+          if (simState.current.glowingSplintCharged || simState.current.splintFlameProgress > 0) {
+            const p = simState.current.splintFlameProgress;
+            const flicker = Math.sin(Date.now() / 90) * (2 + p * 3);
+
             const ember = ctx.createRadialGradient(splintLen / 2 + 2, 0, 0.8, splintLen / 2 + 2, 0, 10);
             ember.addColorStop(0, 'rgba(251,191,36,0.98)');
             ember.addColorStop(0.45, 'rgba(249,115,22,0.82)');
             ember.addColorStop(1, 'rgba(249,115,22,0.06)');
             ctx.fillStyle = ember;
             ctx.beginPath();
-            ctx.arc(splintLen / 2 + 2, 0, 9, 0, Math.PI * 2);
+            ctx.arc(splintLen / 2 + 2, 0, 9 + p * 3, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = 'rgba(254,240,138,0.92)';
             ctx.beginPath();
-            ctx.arc(splintLen / 2 + 1, 0, 3, 0, Math.PI * 2);
+            ctx.arc(splintLen / 2 + 1, 0, 3 + p * 1.4, 0, Math.PI * 2);
             ctx.fill();
+
+            if (p > 0.05) {
+              const flameH = 10 + p * 20 + Math.abs(flicker);
+              const flameW = 4 + p * 6;
+
+              ctx.beginPath();
+              ctx.moveTo(splintLen / 2 + 2, -flameH);
+              ctx.quadraticCurveTo(splintLen / 2 - flameW, -flameH * 0.35, splintLen / 2 + 1, 1);
+              ctx.quadraticCurveTo(splintLen / 2 + flameW, -flameH * 0.35, splintLen / 2 + 2, -flameH);
+              const outerFlame = ctx.createLinearGradient(splintLen / 2 + 2, -flameH, splintLen / 2 + 2, 3);
+              outerFlame.addColorStop(0, 'rgba(251,146,60,0.94)');
+              outerFlame.addColorStop(0.65, 'rgba(249,115,22,0.85)');
+              outerFlame.addColorStop(1, 'rgba(245,158,11,0.5)');
+              ctx.fillStyle = outerFlame;
+              ctx.fill();
+
+              ctx.beginPath();
+              ctx.moveTo(splintLen / 2 + 2, -flameH * 0.72);
+              ctx.quadraticCurveTo(splintLen / 2 - flameW * 0.45, -flameH * 0.28, splintLen / 2 + 1, -1);
+              ctx.quadraticCurveTo(splintLen / 2 + flameW * 0.45, -flameH * 0.28, splintLen / 2 + 2, -flameH * 0.72);
+              const coreFlame = ctx.createLinearGradient(splintLen / 2 + 2, -flameH * 0.72, splintLen / 2 + 2, 0);
+              coreFlame.addColorStop(0, 'rgba(255,237,160,0.95)');
+              coreFlame.addColorStop(1, 'rgba(254,215,170,0.75)');
+              ctx.fillStyle = coreFlame;
+              ctx.fill();
+            }
           }
           ctx.restore();
 
@@ -2506,7 +2570,16 @@
               </div>
             )}
 
-            {activePractical !== 'conservation-of-mass' && (
+            {activePractical === 'gas-test-oxygen' ? (
+              <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+                <button
+                  onClick={() => setEquipment((prev) => ({ ...prev, bunsenLit: !prev.bunsenLit }))}
+                  className={`px-8 py-4 rounded-full font-bold border transition-all active:scale-95 ${equipment.bunsenLit ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-slate-700/40 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
+                >
+                  {equipment.bunsenLit ? 'Turn Bunsen Off' : 'Turn Bunsen On'}
+                </button>
+              </div>
+            ) : activePractical !== 'conservation-of-mass' && (
               <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
                 <HoldButton
                   onHold={() => changeTemp(1.5)}
