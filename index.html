@@ -140,7 +140,12 @@
         carbonDioxideGas: 0,
         oxygenGas: 0,
         limewaterCloudy: false,
-        glowingSplintCharged: false
+        glowingSplintCharged: false,
+        oxygenSplintX: 330,
+        oxygenSplintY: 220,
+        oxygenSplintDragging: false,
+        oxygenSplintOffsetX: 0,
+        oxygenSplintOffsetY: 0
       });
 
       const canvasRef = useRef(null);
@@ -342,7 +347,12 @@
           carbonDioxideGas: 0,
           oxygenGas: 0,
           limewaterCloudy: false,
-          glowingSplintCharged: false
+          glowingSplintCharged: false,
+          oxygenSplintX: 330,
+          oxygenSplintY: 220,
+          oxygenSplintDragging: false,
+          oxygenSplintOffsetX: 0,
+          oxygenSplintOffsetY: 0
         };
         setUiState({ temp: 20, volume: 0, ph: 7.0, gasVolume: 0, activeReaction: null });
       };
@@ -426,10 +436,25 @@
       };
 
       const handleCanvasMouseDown = (event) => {
-        if (!equipment.crucible) return;
         const point = getCanvasCoords(event);
         if (!point) return;
         const s = simState.current;
+
+        if (activePractical === 'gas-test-oxygen') {
+          const sx = s.oxygenSplintX;
+          const sy = s.oxygenSplintY;
+          const splintW = 84;
+          const splintH = 14;
+          const isOnSplint = point.x >= sx - splintW / 2 && point.x <= sx + splintW / 2 && point.y >= sy - splintH / 2 && point.y <= sy + splintH / 2;
+          if (isOnSplint) {
+            s.oxygenSplintDragging = true;
+            s.oxygenSplintOffsetX = point.x - sx;
+            s.oxygenSplintOffsetY = point.y - sy;
+            return;
+          }
+        }
+
+        if (!equipment.crucible) return;
         const cx = s.crucibleX;
         const cy = s.crucibleY;
         const dx = point.x - cx;
@@ -444,9 +469,16 @@
 
       const handleCanvasMouseMove = (event) => {
         const s = simState.current;
-        if (!s.crucibleDragging) return;
         const point = getCanvasCoords(event);
         if (!point) return;
+
+        if (s.oxygenSplintDragging) {
+          s.oxygenSplintX = Math.max(80, Math.min(470, point.x - s.oxygenSplintOffsetX));
+          s.oxygenSplintY = Math.max(120, Math.min(560, point.y - s.oxygenSplintOffsetY));
+          return;
+        }
+
+        if (!s.crucibleDragging) return;
 
         s.crucibleX = Math.max(60, Math.min(470, point.x - s.crucibleDragOffsetX));
         s.crucibleY = Math.max(140, Math.min(605, point.y - s.crucibleDragOffsetY));
@@ -454,6 +486,21 @@
 
       const handleCanvasMouseUp = () => {
         const s = simState.current;
+        if (s.oxygenSplintDragging) {
+          s.oxygenSplintDragging = false;
+
+          if (activePractical === 'gas-test-oxygen') {
+            const inBubbleZone = s.oxygenSplintX > 185 && s.oxygenSplintX < 255 && s.oxygenSplintY > 210 && s.oxygenSplintY < 360;
+            if (inBubbleZone && s.oxygenGas >= 10 && s.glowingSplintCharged) {
+              s.oxygenGas = Math.max(0, s.oxygenGas - 18);
+              s.glowingSplintCharged = false;
+              setUiState((prev) => ({ ...prev, activeReaction: 'Splint relights brightly: Oxygen confirmed' }));
+              triggerReaction('steam', 0.35);
+              setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
+            }
+          }
+        }
+
         if (!s.crucibleDragging) return;
         s.crucibleDragging = false;
 
@@ -558,6 +605,9 @@
         s.oxygenGas = 0;
         s.limewaterCloudy = false;
         s.glowingSplintCharged = false;
+        s.oxygenSplintX = 330;
+        s.oxygenSplintY = 220;
+        s.oxygenSplintDragging = false;
 
         setEquipment((prev) => ({
           ...prev,
@@ -1922,100 +1972,71 @@
         }
 
         if (activePractical === 'gas-test-oxygen') {
-          const fx = 392;
-          const fy = 424;
-          const tx = 474;
-          const ty = 428;
+          const bubbleX = 220;
+          const bubbleBaseY = 430;
 
           ctx.save();
-          ctx.fillStyle = 'rgba(0,0,0,0.22)';
-          ctx.beginPath();
-          ctx.ellipse(fx, fy + 86, 34, 9, 0, 0, Math.PI * 2);
-          ctx.fill();
-
-          const flaskGrad = ctx.createLinearGradient(fx - 30, fy - 70, fx + 30, fy + 60);
-          flaskGrad.addColorStop(0, 'rgba(255,255,255,0.14)');
-          flaskGrad.addColorStop(1, 'rgba(148,163,184,0.16)');
-          ctx.fillStyle = flaskGrad;
-          ctx.strokeStyle = 'rgba(226,232,240,0.86)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(fx - 10, fy - 66);
-          ctx.lineTo(fx - 10, fy - 30);
-          ctx.quadraticCurveTo(fx - 30, fy + 20, fx - 24, fy + 74);
-          ctx.lineTo(fx + 24, fy + 74);
-          ctx.quadraticCurveTo(fx + 30, fy + 20, fx + 10, fy - 30);
-          ctx.lineTo(fx + 10, fy - 66);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-
-          const flaskLiquid = ctx.createLinearGradient(fx, fy + 22, fx, fy + 72);
-          flaskLiquid.addColorStop(0, 'rgba(191,219,254,0.52)');
-          flaskLiquid.addColorStop(1, 'rgba(96,165,250,0.66)');
-          ctx.fillStyle = flaskLiquid;
-          ctx.beginPath();
-          ctx.moveTo(fx - 22, fy + 24);
-          ctx.quadraticCurveTo(fx, fy + 17, fx + 22, fy + 24);
-          ctx.lineTo(fx + 20, fy + 70);
-          ctx.lineTo(fx - 20, fy + 70);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = 'rgba(100,116,139,0.92)';
-          ctx.fillRect(fx - 11, fy - 72, 22, 8);
 
           if (simState.current.oxygenGas > 0) {
-            ctx.fillStyle = 'rgba(241,245,249,0.72)';
-            for (let i = 0; i < 5; i += 1) {
-              const bx = fx - 6 + i * 3;
-              const by = fy + 64 - i * 10;
+            for (let i = 0; i < 12; i += 1) {
+              const drift = Math.sin((Date.now() / 260) + i) * 10;
+              const progress = ((Date.now() / 140) + i * 8) % 140;
+              const by = bubbleBaseY - progress;
+              if (by < 210) continue;
+              const bx = bubbleX + drift + (i % 3) * 6 - 6;
+              const r = 2 + (i % 3) * 0.8;
+              ctx.fillStyle = 'rgba(226,232,240,0.70)';
               ctx.beginPath();
-              ctx.arc(bx, by, 2, 0, Math.PI * 2);
+              ctx.arc(bx, by, r, 0, Math.PI * 2);
               ctx.fill();
+              ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+              ctx.lineWidth = 0.8;
+              ctx.stroke();
             }
           }
 
-          ctx.strokeStyle = 'rgba(203,213,225,0.9)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(fx + 8, fy - 68);
-          ctx.bezierCurveTo(fx + 40, fy - 106, tx - 18, ty - 94, tx - 12, ty - 18);
-          ctx.stroke();
+          const sx = simState.current.oxygenSplintX;
+          const sy = simState.current.oxygenSplintY;
+          const splintLen = 78;
 
-          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.save();
+          ctx.translate(sx, sy);
+          ctx.rotate(-0.08);
+          const wood = ctx.createLinearGradient(-splintLen / 2, 0, splintLen / 2, 0);
+          wood.addColorStop(0, '#7c4a22');
+          wood.addColorStop(0.55, '#a16231');
+          wood.addColorStop(1, '#6b3f1f');
+          ctx.fillStyle = wood;
           ctx.beginPath();
-          ctx.ellipse(tx, ty + 94, 20, 7, 0, 0, Math.PI * 2);
+          ctx.roundRect(-splintLen / 2, -4, splintLen, 8, 3);
           ctx.fill();
 
-          ctx.fillStyle = 'rgba(255,255,255,0.14)';
-          ctx.strokeStyle = 'rgba(226,232,240,0.86)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.roundRect(tx - 12, ty - 46, 24, 130, 12);
-          ctx.fill();
+          ctx.moveTo(-splintLen / 2 + 6, -1);
+          ctx.lineTo(splintLen / 2 - 8, -1);
           ctx.stroke();
 
           if (simState.current.glowingSplintCharged) {
-            ctx.fillStyle = 'rgba(248,250,252,0.95)';
-            ctx.fillRect(tx + 20, ty - 58, 20, 3);
-
-            const ember = ctx.createRadialGradient(tx + 42, ty - 57, 1, tx + 42, ty - 57, 6);
-            ember.addColorStop(0, 'rgba(254,240,138,0.95)');
-            ember.addColorStop(1, 'rgba(249,115,22,0.35)');
+            const ember = ctx.createRadialGradient(splintLen / 2 + 2, 0, 0.8, splintLen / 2 + 2, 0, 10);
+            ember.addColorStop(0, 'rgba(251,191,36,0.98)');
+            ember.addColorStop(0.45, 'rgba(249,115,22,0.82)');
+            ember.addColorStop(1, 'rgba(249,115,22,0.06)');
             ctx.fillStyle = ember;
             ctx.beginPath();
-            ctx.arc(tx + 42, ty - 57, 5, 0, Math.PI * 2);
+            ctx.arc(splintLen / 2 + 2, 0, 9, 0, Math.PI * 2);
             ctx.fill();
-          } else {
-            ctx.fillStyle = 'rgba(203,213,225,0.8)';
-            ctx.fillRect(tx + 20, ty - 58, 20, 3);
+            ctx.fillStyle = 'rgba(254,240,138,0.92)';
+            ctx.beginPath();
+            ctx.arc(splintLen / 2 + 1, 0, 3, 0, Math.PI * 2);
+            ctx.fill();
           }
+          ctx.restore();
 
-          ctx.fillStyle = 'rgba(226,232,240,0.85)';
-          ctx.font = '10px monospace';
-          ctx.fillText('H₂O₂ flask + catalyst', fx - 50, fy + 96);
-          ctx.fillText('oxygen test tube', tx - 42, ty + 100);
+          ctx.fillStyle = 'rgba(226,232,240,0.90)';
+          ctx.font = '11px monospace';
+          ctx.fillText('Drag glowing splint through oxygen bubbles', 130, 196);
           ctx.restore();
         }
 
