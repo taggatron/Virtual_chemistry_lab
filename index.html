@@ -33,6 +33,15 @@
       animation: streamPulse 900ms ease-in-out infinite;
       transform-origin: center top;
     }
+
+    @keyframes rotateHintFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+
+    .rotate-hint-float {
+      animation: rotateHintFloat 1100ms ease-in-out infinite;
+    }
   </style>
 </head>
 <body class="bg-slate-950">
@@ -112,6 +121,8 @@
       const [view, setView] = useState({ zoom: 1, offsetX: 0, offsetY: 0 });
       const [helpOpenNonce, setHelpOpenNonce] = useState(0);
       const [activePractical, setActivePractical] = useState(null);
+      const [isMobileLandscape, setIsMobileLandscape] = useState(false);
+      const [isMobilePortrait, setIsMobilePortrait] = useState(false);
 
       const simState = useRef({
         volume: 0,
@@ -153,6 +164,24 @@
 
       const canvasRef = useRef(null);
       const requestRef = useRef();
+
+      useEffect(() => {
+        const updateOrientationState = () => {
+          const isMobile = window.matchMedia('(max-width: 900px)').matches;
+          const landscape = window.matchMedia('(orientation: landscape)').matches;
+          const portrait = window.matchMedia('(orientation: portrait)').matches;
+          setIsMobileLandscape(isMobile && landscape);
+          setIsMobilePortrait(isMobile && portrait);
+        };
+
+        updateOrientationState();
+        window.addEventListener('resize', updateOrientationState);
+        window.addEventListener('orientationchange', updateOrientationState);
+        return () => {
+          window.removeEventListener('resize', updateOrientationState);
+          window.removeEventListener('orientationchange', updateOrientationState);
+        };
+      }, []);
 
       const applyThermalChange = (delta, persistence = 0.015) => {
         const s = simState.current;
@@ -2251,7 +2280,17 @@
 
       return (
         <div className="flex flex-col md:flex-row h-screen w-full bg-slate-900 text-slate-100 font-sans overflow-hidden">
-          <div className="w-full md:w-80 bg-slate-800 border-r border-slate-700 flex flex-col z-20 shadow-xl">
+          {isMobilePortrait && (
+            <div className="fixed inset-0 z-[120] bg-slate-950/96 flex items-center justify-center p-6">
+              <div className="max-w-xs w-full rounded-2xl border border-slate-700 bg-slate-900/95 p-6 text-center shadow-2xl">
+                <div className="text-5xl mb-3 rotate-hint-float">📱↔️</div>
+                <h2 className="text-lg font-bold text-sky-300">Rotate To Landscape</h2>
+                <p className="mt-2 text-sm text-slate-300">This lab works best in landscape mode on mobile. Turn your device sideways to continue.</p>
+              </div>
+            </div>
+          )}
+
+          <div className={`w-full ${isMobileLandscape ? 'md:w-64' : 'md:w-80'} bg-slate-800 border-r border-slate-700 flex flex-col z-20 shadow-xl`}>
             <div className="p-5 border-b border-slate-700 bg-slate-800">
               <h1 className="text-xl font-bold flex items-center gap-2 text-sky-400">
                 <FlaskConical className="w-6 h-6" />
@@ -2433,8 +2472,8 @@
               Help
             </button>
 
-            <div className="absolute top-6 left-0 right-0 flex justify-center z-10 pointer-events-none">
-              <div className="flex gap-4 md:gap-8 bg-slate-800/80 backdrop-blur-md p-3 md:p-4 rounded-2xl border border-slate-700 shadow-2xl">
+            <div className={`absolute ${isMobileLandscape ? 'top-3' : 'top-6'} left-0 right-0 flex justify-center z-10 pointer-events-none`}>
+              <div className={`flex ${isMobileLandscape ? 'gap-3 md:gap-4' : 'gap-4 md:gap-8'} bg-slate-800/80 backdrop-blur-md ${isMobileLandscape ? 'p-2 md:p-2.5' : 'p-3 md:p-4'} rounded-2xl border border-slate-700 shadow-2xl`}>
                 <MetricItem
                   label="Temperature"
                   value={`${uiState.temp}°C`}
@@ -2484,7 +2523,7 @@
                 style={{ backgroundImage: 'radial-gradient(#94a3b8 1px, transparent 1px)', backgroundSize: '24px 24px' }}
               />
 
-              <div className="absolute top-4 right-4 z-20 flex flex-col gap-2 bg-slate-800/80 border border-slate-700 rounded-xl p-2 backdrop-blur">
+              <div className={`absolute ${isMobileLandscape ? 'top-2 right-2' : 'top-4 right-4'} z-20 flex flex-col gap-2 bg-slate-800/80 border border-slate-700 rounded-xl p-2 backdrop-blur ${isMobileLandscape ? 'scale-90 origin-top-right' : ''}`}>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setZoom(view.zoom - 0.1)} className="px-2 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600">−</button>
                   <span className="text-xs text-slate-300 w-12 text-center">{Math.round(view.zoom * 100)}%</span>
@@ -2514,7 +2553,7 @@
 
               <div
                 className={`transition-all duration-300 ${activeTab === 'chemicals' ? 'scale-100' : 'scale-95'}`}
-                style={{ transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.zoom})` }}
+                style={{ transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.zoom * (isMobileLandscape ? 0.78 : 1)})` }}
               >
                 <canvas
                   ref={canvasRef}
@@ -2541,7 +2580,7 @@
             )}
 
             {(activePractical === 'gas-test-hydrogen' || activePractical === 'gas-test-limewater' || activePractical === 'gas-test-oxygen') && (
-              <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 rounded-xl border border-slate-600 bg-slate-800/90 backdrop-blur px-4 py-3 shadow-xl flex items-center gap-3">
+              <div className={`absolute ${isMobileLandscape ? 'bottom-18' : 'bottom-24'} left-1/2 -translate-x-1/2 z-20 rounded-xl border border-slate-600 bg-slate-800/90 backdrop-blur ${isMobileLandscape ? 'px-3 py-2' : 'px-4 py-3'} shadow-xl flex items-center gap-3`}>
                 <div className="text-xs text-slate-300">
                   {activePractical === 'gas-test-hydrogen'
                     ? `H₂ ready: ${Math.round(simState.current.hydrogenGas)} units`
@@ -2571,7 +2610,7 @@
             )}
 
             {activePractical === 'gas-test-oxygen' ? (
-              <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+              <div className={`${isMobileLandscape ? 'p-3 md:p-4' : 'p-6 md:p-8'} flex justify-center gap-4 z-20`}>
                 <button
                   onClick={() => setEquipment((prev) => ({ ...prev, bunsenLit: !prev.bunsenLit }))}
                   className={`px-8 py-4 rounded-full font-bold border transition-all active:scale-95 ${equipment.bunsenLit ? 'bg-amber-500/20 border-amber-400 text-amber-300' : 'bg-slate-700/40 border-slate-600 text-slate-300 hover:bg-slate-700'}`}
@@ -2580,7 +2619,7 @@
                 </button>
               </div>
             ) : activePractical !== 'conservation-of-mass' && (
-              <div className="p-6 md:p-8 flex justify-center gap-4 z-20">
+              <div className={`${isMobileLandscape ? 'p-3 md:p-4' : 'p-6 md:p-8'} flex justify-center gap-4 z-20`}>
                 <HoldButton
                   onHold={() => changeTemp(1.5)}
                   className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30"
