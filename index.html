@@ -104,7 +104,8 @@
         crucible: false,
         tripod: false,
         gauze: false,
-        scales: false
+        scales: false,
+        indicatorDropper: false
       });
       const [doseEditor, setDoseEditor] = useState(null);
       const [isBeakerTargeted, setIsBeakerTargeted] = useState(false);
@@ -268,7 +269,7 @@
           s.contents.hcl = Math.max(0, (s.contents.hcl || 0) - neutralized);
           s.contents.naoh = Math.max(0, (s.contents.naoh || 0) - neutralized);
           applyThermalChange(10, 0.016);
-          triggerReaction('steam', 1, 'Neutralization: HCl + NaOH');
+          triggerReaction('steam', 1, s.indicatorPresent ? 'Neutralization: indicator shifts toward green' : 'Neutralization: HCl + NaOH');
         }
 
         if ((chem.id === 'mg' && s.contents.hcl > 0) || (chem.id === 'hcl' && s.contents.mg > 0)) {
@@ -550,6 +551,21 @@
         s.scaleSampleMass = Number(mass.toFixed(2));
         setUiState((prev) => ({ ...prev, activeReaction: `${chem.name} weighed: ${s.scaleSampleMass.toFixed(2)} g` }));
         setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1500);
+      };
+
+      const addIndicatorDrops = () => {
+        const s = simState.current;
+        if (!equipment.indicatorDropper) return;
+        if (s.volume <= 0) {
+          setUiState((prev) => ({ ...prev, activeReaction: 'Add solution to beaker before using indicator' }));
+          setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1400);
+          return;
+        }
+
+        s.indicatorPresent = true;
+        s.color = mixColors(s.color, [50, 200, 50, 0.9], s.volume, 6);
+        setUiState((prev) => ({ ...prev, activeReaction: 'Universal indicator added via dropper' }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1400);
       };
 
       const transferScaleToCrucible = () => {
@@ -1974,6 +1990,17 @@
 
           ctx.save();
 
+          if (simState.current.oxygenSplintDragging) {
+            const pulse = 0.55 + Math.sin(Date.now() / 220) * 0.2;
+            ctx.strokeStyle = `rgba(125, 211, 252, ${pulse})`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.ellipse(bubbleX, 286, 40, 78, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
           if (simState.current.oxygenGas > 0) {
             for (let i = 0; i < 12; i += 1) {
               const drift = Math.sin((Date.now() / 260) + i) * 10;
@@ -2035,6 +2062,48 @@
           ctx.font = '11px monospace';
           ctx.fillText('Drag glowing splint through oxygen bubbles', 130, 196);
           ctx.restore();
+        }
+
+        if (equipment.indicatorDropper && showBeaker) {
+          const dx = 382;
+          const dy = 186;
+          const dropY = BY + BH - Math.max(26, (s.volume / 400) * (BH - 20));
+
+          ctx.save();
+          ctx.translate(dx, dy);
+          ctx.rotate(-0.35);
+
+          const glass = ctx.createLinearGradient(-8, -30, 8, 20);
+          glass.addColorStop(0, 'rgba(255,255,255,0.45)');
+          glass.addColorStop(1, 'rgba(148,163,184,0.38)');
+          ctx.fillStyle = glass;
+          ctx.beginPath();
+          ctx.roundRect(-7, -22, 14, 50, 7);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(226,232,240,0.9)';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(100,116,139,0.92)';
+          ctx.beginPath();
+          ctx.roundRect(-10, -32, 20, 12, 5);
+          ctx.fill();
+
+          ctx.fillStyle = 'rgba(16,185,129,0.85)';
+          ctx.beginPath();
+          ctx.moveTo(-2, 28);
+          ctx.lineTo(2, 28);
+          ctx.lineTo(0, 40);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+
+          if (s.indicatorPresent && s.volume > 0) {
+            ctx.fillStyle = 'rgba(16,185,129,0.72)';
+            ctx.beginPath();
+            ctx.arc(dx - 18, Math.max(BY + 16, dropY - 5), 2.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
 
         requestRef.current = requestAnimationFrame(draw);
@@ -2099,7 +2168,8 @@
           crucible: false,
           tripod: false,
           gauze: false,
-          scales: false
+          scales: false,
+          indicatorDropper: false
         });
         setActiveTab('chemicals');
         clearBeaker();
@@ -2108,6 +2178,7 @@
       const equipmentCards = [
         { key: 'syringe', title: 'Gas Syringe', desc: 'Collects reaction gases', emoji: '💉' },
         { key: 'bunsen', title: 'Bunsen Burner', desc: 'Slowly heats apparatus', emoji: '🔥' },
+        { key: 'indicatorDropper', title: 'Indicator Dropper', desc: 'Add universal indicator drops', emoji: '🧪' },
         { key: 'crucible', title: 'Crucible', desc: 'For magnesium combustion', emoji: '⚱️' },
         { key: 'tripod', title: 'Tripod', desc: 'Supports crucible/gauze', emoji: '🛠️' },
         { key: 'gauze', title: 'Wire Gauze', desc: 'Distributes heat', emoji: '🧰' },
@@ -2197,6 +2268,18 @@
                     >
                       {equipment.bunsenLit ? 'Extinguish Bunsen' : 'Ignite Bunsen'}
                     </button>
+                  )}
+
+                  {equipment.indicatorDropper && (
+                    <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-3 space-y-2">
+                      <div className="text-xs text-slate-300">Drop indicator to visualize pH and neutralisation color shift.</div>
+                      <button
+                        onClick={addIndicatorDrops}
+                        className="w-full py-1.5 text-xs rounded bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        Add Universal Indicator Drops
+                      </button>
+                    </div>
                   )}
 
                   {equipment.scales && (
