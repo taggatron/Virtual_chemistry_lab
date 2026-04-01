@@ -663,6 +663,43 @@
         setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 1800);
       };
 
+      const loadTitrationPractical = () => {
+        clearBeaker();
+        const s = simState.current;
+        s.contents = { naoh: 25 };
+        s.volume = 25;
+        s.color = [224, 238, 252, 0.32];
+        s.ph = 12.5;
+        s.indicatorPresent = false;
+        s.hydrogenGas = 0;
+        s.carbonDioxideGas = 0;
+        s.oxygenGas = 0;
+
+        setEquipment((prev) => ({
+          ...prev,
+          syringe: false,
+          bunsen: false,
+          bunsenLit: false,
+          crucible: false,
+          tripod: false,
+          gauze: false,
+          scales: false,
+          indicatorDropper: true
+        }));
+
+        setActivePractical('titration-neutralisation');
+        setActiveTab('practicals');
+        resetView();
+        setUiState((prev) => ({
+          ...prev,
+          volume: 25,
+          ph: 12.5,
+          gasVolume: 0,
+          activeReaction: 'Titration setup loaded: 25.0 mL alkali via volumetric pipette, acid delivered from burette'
+        }));
+        setTimeout(() => setUiState((prev) => ({ ...prev, activeReaction: null })), 2800);
+      };
+
       const loadHydrogenPopPractical = () => {
         clearBeaker();
         const s = simState.current;
@@ -2413,6 +2450,14 @@
                   <p className="text-xs text-slate-500 mb-2">Load a practical setup into the lab</p>
                   <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-4">
                     <div className="flex items-center gap-2 font-semibold text-slate-100">
+                      <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center">🎯</span>
+                      <span>Titration (Neutralisation)</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">Includes burette (buret), volumetric pipette, conical flask, white tile endpoint check, and indicator guidance (phenolphthalein or methyl orange).</div>
+                    <button onClick={loadTitrationPractical} className="mt-3 w-full py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium">Load Practical</button>
+                  </div>
+                  <div className="rounded-xl border border-slate-600 bg-slate-700/30 p-4">
+                    <div className="flex items-center gap-2 font-semibold text-slate-100">
                       <span className="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center">⚖️</span>
                       <span>Conservation of Mass</span>
                     </div>
@@ -2609,6 +2654,37 @@
               </div>
             )}
 
+            {activePractical === 'titration-neutralisation' && (
+              <div className={`absolute ${isMobileLandscape ? 'bottom-18' : 'bottom-24'} left-1/2 -translate-x-1/2 z-20 w-[min(95vw,700px)] rounded-xl border border-slate-600 bg-slate-800/90 backdrop-blur ${isMobileLandscape ? 'px-3 py-2' : 'px-4 py-3'} shadow-xl space-y-2`}>
+                <div className="text-xs text-slate-200 font-semibold">Titration Setup</div>
+                <div className="text-xs text-slate-300">Apparatus: burette (buret), clamp stand, volumetric pipette (25.0 mL), pipette filler, conical flask, white tile.</div>
+                <div className="text-xs text-slate-300">Indicators: use phenolphthalein for strong acid-strong base titrations (sim uses universal indicator drops); methyl orange is also commonly used.</div>
+                <div className="text-xs text-slate-300">
+                  Endpoint guide: {uiState.ph > 8 ? 'Alkaline - add acid in small increments.' : uiState.ph < 6 ? 'Acidic - you have passed the endpoint.' : 'Near neutral endpoint - record final burette reading.'}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => addChemical('hcl', 1)}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold"
+                  >
+                    Add 1.0 mL from Burette
+                  </button>
+                  <button
+                    onClick={() => addChemical('hcl', 5)}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold"
+                  >
+                    Add 5.0 mL from Burette
+                  </button>
+                  <button
+                    onClick={addIndicatorDrops}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                  >
+                    Add Indicator to Flask
+                  </button>
+                </div>
+              </div>
+            )}
+
             {activePractical === 'gas-test-oxygen' ? (
               <div className={`${isMobileLandscape ? 'p-3 md:p-4' : 'p-6 md:p-8'} flex justify-center gap-4 z-20`}>
                 <button
@@ -2785,6 +2861,10 @@
               <li className="flex gap-2">
                 <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">D</span>
                 <span>HCl + NaOH neutralizes toward pH 7.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="bg-slate-700 text-white rounded px-1.5 py-0.5 text-xs font-mono h-fit">E</span>
+                <span>Titration practical includes burette, volumetric pipette, conical flask, and indicator endpoint guidance.</span>
               </li>
             </ul>
             <button
